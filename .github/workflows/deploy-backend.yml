@@ -28,10 +28,10 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           
           # !!! QUAN TRỌNG: Thay thế bằng tên dự án BACKEND chính xác của bạn trên Vercel
-          projectName: "flearning" # Ví dụ: tên project backend của bạn
+          projectName: "flearning-be" # Ví dụ: tên project backend của bạn
           
           # !!! QUAN TRỌNG: Liệt kê chính xác các secrets của backend bạn muốn đồng bộ
-          # Ví dụ: DATABASE_URL,JWT_SECRET,CLOUDINARY_API_KEY...
+          # Ví dụ: DATABASE_URL,JWT_SECRET
           envVariableKeys: DATABASE_URL,JWT_SECRET
         env:
           # --- Cấu hình ví dụ cho DATABASE_URL ---
@@ -56,14 +56,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           
           # Argument để báo cho Vercel deploy bản production hay preview
-          # Nếu là push vào 'main', deploy '--prod'. Nếu là PR, deploy preview (không có arg).
           vercel-args: ${{ github.event_name == 'push' && '--prod' || '' }}
           
           # ID của tài khoản Vercel (dùng chung với frontend)
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID}}
           
-          # !!! QUAN TRỌNG: ID của dự án BACKEND trên Vercel
-          vercel-project-id: ${{ secrets.VERCEL_BACKEND_PROJECT_ID}}
+          # SỬA LẠI TÊN SECRET CHO ĐÚNG
+          # Giờ sẽ dùng VERCEL_PROJECT_ID. Hãy đảm bảo bạn có secret này cho project backend.
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID}}
           
           # Chỉ định thư mục chứa mã nguồn backend cần deploy
           working-directory: ./BackEnd
