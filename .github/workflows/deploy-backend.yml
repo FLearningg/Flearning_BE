@@ -28,7 +28,7 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           
           # !!! QUAN TRỌNG: Thay thế bằng tên dự án BACKEND chính xác của bạn trên Vercel
-          projectName: "flearning-be" # Ví dụ: tên project backend của bạn
+          projectName: "flearning" # Ví dụ: tên project backend của bạn
           
           # !!! QUAN TRỌNG: Liệt kê chính xác các secrets của backend bạn muốn đồng bộ
           # Ví dụ: DATABASE_URL,JWT_SECRET
