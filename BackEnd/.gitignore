@@ -2,10 +2,8 @@
 
 # dependencies
 /node_modules
-/Frontend/node_modules
-/Backend/node_modules
-/Backend/package-lock.json
-/Backend/.env
+/package-lock.json
+/.pnp
 .pnp.js
 
 # testing

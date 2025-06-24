@@ -1,0 +1,67 @@
+# Tên của workflow, sẽ hiển thị trong tab "Actions" trên GitHub
+name: Deploy Backend to Vercel
+
+# Điều kiện để kích hoạt workflow: chạy khi có push lên nhánh `main`
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    steps:
+      # Bước 1: Lấy mã nguồn về máy ảo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Bước 2: Đồng bộ các biến môi trường nhạy cảm từ GitHub Secrets sang Vercel
+      - name: Sync Environment Variables to Vercel
+        uses: dkershner6/vercel-set-env-action@v1
+        with:
+          # Token để xác thực với Vercel
+          token: ${{ secrets.VERCEL_TOKEN }}
+
+          # !!! QUAN TRỌNG: Thay thế bằng tên dự án BACKEND chính xác của bạn trên Vercel
+          projectName: "flearning" # Ví dụ: tên project backend của bạn
+
+          # !!! QUAN TRỌNG: Liệt kê chính xác các secrets của backend bạn muốn đồng bộ
+          # Ví dụ: DATABASE_URL,JWT_SECRET,CLOUDINARY_API_KEY...
+          envVariableKeys: DATABASE_URL,JWT_SECRET,API_KEY
+        env:
+          # --- Cấu hình ví dụ cho DATABASE_URL ---
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TARGET_DATABASE_URL: production # Chỉ áp dụng cho môi trường production
+          TYPE_DATABASE_URL: encrypted    # Mã hóa biến này trên Vercel
+
+          # --- Cấu hình ví dụ cho JWT_SECRET ---
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          TARGET_JWT_SECRET: production
+          TYPE_JWT_SECRET: encrypted
+
+          # --- Cấu hình ví dụ cho API_KEY ---
+          API_KEY: ${{ secrets.API_KEY }}
+          TARGET_API_KEY: production
+          TYPE_API_KEY: encrypted
+
+      # Bước 3: Deploy dự án lên Vercel
+      - name: Deploy Project to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          # Token Vercel để xác thực
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+
+          # Token GitHub để Vercel liên kết commit (có sẵn, không cần tạo)
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Argument để báo cho Vercel đây là bản deploy production
+          vercel-args: '--prod'
+          
+          # ID của tài khoản Vercel (dùng chung với frontend)
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID}}
+          
+          # !!! QUAN TRỌNG: ID của dự án BACKEND trên Vercel
+          vercel-project-id: ${{ secrets.VERCEL_BACKEND_PROJECT_ID}}
+          
+          # Chỉ định thư mục chứa mã nguồn backend cần deploy
+          working-directory: ./BackEnd
