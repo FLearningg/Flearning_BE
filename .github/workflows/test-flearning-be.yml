@@ -42,7 +42,7 @@ jobs:
       #  working-directory: ./BackEnd
 
       # Bước 5: Chạy các bài test tự động (nếu có)
-      # Giả định bạn có script "test" trong package.json của backend
       - name: Run tests
-        run: npm test
+        # Thêm cờ --passWithNoTests để không báo lỗi khi không có file test
+        run: npm test -- --passWithNoTests
         working-directory: ./BackEnd
