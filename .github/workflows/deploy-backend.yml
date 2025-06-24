@@ -32,7 +32,7 @@ jobs:
           
           # !!! QUAN TRỌNG: Liệt kê chính xác các secrets của backend bạn muốn đồng bộ
           # Ví dụ: DATABASE_URL,JWT_SECRET,CLOUDINARY_API_KEY...
-          envVariableKeys: DATABASE_URL,JWT_SECRET,API_KEY
+          envVariableKeys: DATABASE_URL,JWT_SECRET
         env:
           # --- Cấu hình ví dụ cho DATABASE_URL ---
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -44,11 +44,6 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           TARGET_JWT_SECRET: production,preview
           TYPE_JWT_SECRET: encrypted
-
-          # --- Cấu hình ví dụ cho API_KEY ---
-          API_KEY: ${{ secrets.API_KEY }}
-          TARGET_API_KEY: production,preview
-          TYPE_API_KEY: encrypted
 
       # Bước 3: Deploy dự án lên Vercel
       - name: Deploy Project to Vercel
