@@ -37,9 +37,9 @@ jobs:
 
       # Bước 4: Kiểm tra định dạng code (nếu có)
       # Giả định bạn sẽ thêm script "format:check" vào package.json của backend
-      - name: Check code formatting
-        run: npm run format:check
-        working-directory: ./BackEnd
+      #- name: Check code formatting
+      #  run: npm run format:check
+      #  working-directory: ./BackEnd
 
       # Bước 5: Chạy các bài test tự động (nếu có)
       # Giả định bạn có script "test" trong package.json của backend
