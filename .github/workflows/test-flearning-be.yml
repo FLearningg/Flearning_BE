@@ -1,0 +1,48 @@
+# Tên của workflow, sẽ hiển thị trong tab "Actions" trên GitHub
+name: Test Backend Branch
+
+# Điều kiện để kích hoạt workflow
+on:
+  # Chạy khi có push code lên nhánh FLearning
+  push:
+    branches:
+      - FLearning # Đã đổi sang nhánh FLearning
+  # Chạy khi có Pull Request được mở hoặc cập nhật nhắm vào nhánh FLearning
+  pull_request:
+    branches:
+      - FLearning # Đã đổi sang nhánh FLearning
+
+# Các công việc sẽ được thực hiện
+jobs:
+  test-and-lint-backend:
+    name: Run Backend Tests and Linter
+    runs-on: ubuntu-latest
+
+    steps:
+      # Bước 1: Lấy mã nguồn về
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Bước 2: Thiết lập môi trường Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Bước 3: Cài đặt các dependencies
+      - name: Install dependencies
+        run: npm install
+        # Chỉ định thư mục chứa code backend
+        working-directory: ./BackEnd
+
+      # Bước 4: Kiểm tra định dạng code (nếu có)
+      # Giả định bạn sẽ thêm script "format:check" vào package.json của backend
+      - name: Check code formatting
+        run: npm run format:check
+        working-directory: ./BackEnd
+
+      # Bước 5: Chạy các bài test tự động (nếu có)
+      # Giả định bạn có script "test" trong package.json của backend
+      - name: Run tests
+        run: npm test
+        working-directory: ./BackEnd
