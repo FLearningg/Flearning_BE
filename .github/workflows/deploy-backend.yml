@@ -1,13 +1,15 @@
 # Tên của workflow, sẽ hiển thị trong tab "Actions" trên GitHub
 name: Deploy Backend to Vercel
 
-# Điều kiện để kích hoạt workflow: chạy khi có push lên nhánh `main`
+# Điều kiện để kích hoạt workflow
 on:
+  # Chạy khi có push code lên nhánh `main` (deploy production)
   push:
     branches:
       - main
-    pull_request:
-       branches:
+  # Chạy khi có Pull Request được mở hoặc cập nhật nhắm vào nhánh `main` (deploy preview)
+  pull_request:
+    branches:
       - main
 
 jobs:
@@ -24,27 +26,28 @@ jobs:
         with:
           # Token để xác thực với Vercel
           token: ${{ secrets.VERCEL_TOKEN }}
-
+          
           # !!! QUAN TRỌNG: Thay thế bằng tên dự án BACKEND chính xác của bạn trên Vercel
           projectName: "flearning" # Ví dụ: tên project backend của bạn
-
+          
           # !!! QUAN TRỌNG: Liệt kê chính xác các secrets của backend bạn muốn đồng bộ
           # Ví dụ: DATABASE_URL,JWT_SECRET,CLOUDINARY_API_KEY...
           envVariableKeys: DATABASE_URL,JWT_SECRET,API_KEY
         env:
           # --- Cấu hình ví dụ cho DATABASE_URL ---
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          TARGET_DATABASE_URL: production # Chỉ áp dụng cho môi trường production
-          TYPE_DATABASE_URL: encrypted    # Mã hóa biến này trên Vercel
+          # Áp dụng biến này cho cả môi trường production và preview
+          TARGET_DATABASE_URL: production,preview
+          TYPE_DATABASE_URL: encrypted
 
           # --- Cấu hình ví dụ cho JWT_SECRET ---
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          TARGET_JWT_SECRET: production
+          TARGET_JWT_SECRET: production,preview
           TYPE_JWT_SECRET: encrypted
 
           # --- Cấu hình ví dụ cho API_KEY ---
           API_KEY: ${{ secrets.API_KEY }}
-          TARGET_API_KEY: production
+          TARGET_API_KEY: production,preview
           TYPE_API_KEY: encrypted
 
       # Bước 3: Deploy dự án lên Vercel
@@ -53,12 +56,13 @@ jobs:
         with:
           # Token Vercel để xác thực
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
-
+          
           # Token GitHub để Vercel liên kết commit (có sẵn, không cần tạo)
           github-token: ${{ secrets.GITHUB_TOKEN }}
           
-          # Argument để báo cho Vercel đây là bản deploy production
-          vercel-args: '--prod'
+          # Argument để báo cho Vercel deploy bản production hay preview
+          # Nếu là push vào 'main', deploy '--prod'. Nếu là PR, deploy preview (không có arg).
+          vercel-args: ${{ github.event_name == 'push' && '--prod' || '' }}
           
           # ID của tài khoản Vercel (dùng chung với frontend)
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID}}
