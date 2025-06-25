@@ -3,6 +3,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const cleanupTempFiles = require("./utils/cleanup-temp-files");
 
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -29,7 +30,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
-// Admin routes
+// Admin routes (includes section, lesson management and file upload)
 app.use("/api/admin", adminRoutes);
 
 // Course routes
@@ -42,6 +43,9 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/cart", cartRoutes);
 // Wishlist routes
 app.use("/api/wishlist", wishlistRoutes);
+
+// Dọn dẹp file tạm mỗi lần server start
+cleanupTempFiles();
 
 mongoose
   .connect(process.env.MONGO_URI, {

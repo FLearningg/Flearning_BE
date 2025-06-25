@@ -18,8 +18,21 @@ const {
   updateLesson,
   deleteLesson,
   getLesson,
+  moveLessonVideo,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
+const upload = require("../middlewares/uploadMiddleware");
+const {
+  uploadToFirebase,
+  getCourseFiles,
+  deleteFile,
+  testDetectFolder,
+  testFirebaseUrl,
+  getTemporaryFiles,
+  moveFileFromTemporary,
+  testUrlAccess,
+  fixCorsUrl,
+} = require("../controllers/firebaseController");
 
 // All admin routes require admin authorization
 router.use(authorize("admin"));
@@ -48,5 +61,23 @@ router.post("/courses/:courseId/sections/:sectionId/lessons", createLesson);
 router.put("/courses/:courseId/lessons/:lessonId", updateLesson);
 router.delete("/courses/:courseId/lessons/:lessonId", deleteLesson);
 router.get("/courses/:courseId/lessons/:lessonId", getLesson);
+
+// Lesson video management route
+router.post("/courses/:courseId/lessons/:lessonId/move-video", moveLessonVideo);
+
+// File management routes
+router.post("/upload", upload.single("file"), uploadToFirebase);
+router.get("/courses/:courseId/files/:folderType", getCourseFiles);
+router.delete("/files", deleteFile);
+
+// Temporary file management routes
+router.get("/temporary-files/:folderType", getTemporaryFiles);
+router.post("/move-to-course", moveFileFromTemporary);
+
+// Testing routes
+router.post("/test-detect-folder", testDetectFolder);
+router.post("/test-firebase-url", testFirebaseUrl);
+router.post("/test-url-access", testUrlAccess);
+router.post("/fix-cors-url", fixCorsUrl);
 
 module.exports = router;

@@ -5,6 +5,77 @@ const Category = require("../models/categoryModel");
 const Discount = require("../models/discountModel");
 const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
+const mongoose = require("mongoose");
+const admin = require("firebase-admin");
+
+/**
+ * Helper function to move file from temporary to course folder
+ */
+const moveFileFromTemporaryToCourse = async (
+  sourceDestination,
+  courseId,
+  folderType
+) => {
+  try {
+    const bucket = admin.storage().bucket();
+    const sourceFile = bucket.file(sourceDestination);
+
+    // Check if source file exists
+    const [exists] = await sourceFile.exists();
+    if (!exists) {
+      throw new Error(`Source file not found: ${sourceDestination}`);
+    }
+
+    // Generate new destination based on folderType
+    const fileName = sourceDestination.split("/").pop();
+    let newDestination;
+
+    // Handle different folder types
+    if (folderType === "thumbnail" || folderType === "trailer") {
+      // Standard folder structure for thumbnail and trailer
+      newDestination = `courses/${courseId}/${folderType}/${fileName}`;
+    } else if (
+      folderType.includes("section_") &&
+      folderType.includes("lesson_")
+    ) {
+      // New folder structure: section_1/lesson_1
+      newDestination = `courses/${courseId}/${folderType}/${fileName}`;
+    } else {
+      // Fallback to general structure
+      newDestination = `courses/${courseId}/${folderType}/${fileName}`;
+    }
+
+    const targetFile = bucket.file(newDestination);
+
+    // Copy file to new location
+    await sourceFile.copy(targetFile);
+
+    // Delete original file from temporary folder
+    await sourceFile.delete();
+
+    // Generate new URL with proper format
+    const bucketName = bucket.name;
+    const encodedDestination = encodeURIComponent(newDestination);
+    const newUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedDestination}?alt=media`;
+
+    // Update course with new URL if it's thumbnail or trailer
+    if (folderType === "thumbnail" || folderType === "trailer") {
+      const updateData = {};
+      updateData[folderType] = newUrl;
+      await Course.findByIdAndUpdate(courseId, updateData);
+    }
+
+    return {
+      success: true,
+      from: sourceDestination,
+      newDestination,
+      newUrl,
+    };
+  } catch (error) {
+    console.error(`❌ Error moving file from temporary:`, error);
+    throw error;
+  }
+};
 
 /**
  * @desc    Get all users with search and filtering
@@ -371,7 +442,22 @@ exports.getAllCourses = async (req, res) => {
 
     // Filter by category
     if (categoryId) {
-      query.categoryId = categoryId;
+      let category;
+      if (mongoose.Types.ObjectId.isValid(categoryId)) {
+        category = await Category.findById(categoryId);
+      }
+      if (!category) {
+        // Nếu không phải ObjectId hoặc không tìm thấy, thử tìm theo name
+        category = await Category.findOne({ name: categoryId });
+      }
+      if (!category) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category ID or name",
+        });
+      }
+      // Nếu FE truyền tên, gán lại categoryId là _id thực sự
+      categoryId = category._id;
     }
 
     // Filter by level
@@ -451,9 +537,10 @@ exports.getAllCourses = async (req, res) => {
  */
 exports.createCourse = async (req, res) => {
   try {
-    const {
+    let {
       title,
       subTitle,
+      subtitle, // Add support for lowercase subtitle
       message,
       detail,
       materials,
@@ -468,23 +555,55 @@ exports.createCourse = async (req, res) => {
       subtitleLanguage,
     } = req.body;
 
-    // Validate required fields
-    if (!title || !subTitle || !detail?.description || !price) {
+    // Fix: Support both subTitle and subtitle from frontend
+    if (!subTitle && subtitle) {
+      subTitle = subtitle;
+    }
+
+    // Validate required fields with detailed error messages
+    const errors = [];
+    if (!title || title.trim() === "") {
+      errors.push("title is required and cannot be empty");
+    }
+    if (!subTitle || subTitle.trim() === "") {
+      errors.push("subTitle is required and cannot be empty");
+    }
+    if (!detail || typeof detail !== "object") {
+      errors.push("detail object is required");
+    } else if (!detail.description || detail.description.trim() === "") {
+      errors.push("detail.description is required and cannot be empty");
+    }
+    if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+      errors.push("price is required and must be a positive number");
+    }
+
+    if (errors.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "Title, subtitle, description, and price are required",
+        message: "Validation failed: " + errors.join(", "),
+        errors: errors,
+        receivedData: { title, subTitle, detail, price },
       });
     }
 
     // Validate categoryId if provided
     if (categoryId) {
-      const category = await Category.findById(categoryId);
+      let category;
+      if (mongoose.Types.ObjectId.isValid(categoryId)) {
+        category = await Category.findById(categoryId);
+      }
+      if (!category) {
+        // Nếu không phải ObjectId hoặc không tìm thấy, thử tìm theo name
+        category = await Category.findOne({ name: categoryId });
+      }
       if (!category) {
         return res.status(400).json({
           success: false,
-          message: "Invalid category ID",
+          message: "Invalid category ID or name",
         });
       }
+      // Nếu FE truyền tên, gán lại categoryId là _id thực sự
+      categoryId = category._id;
     }
 
     // Validate discountId if provided
@@ -497,6 +616,11 @@ exports.createCourse = async (req, res) => {
         });
       }
     }
+
+    // Chuyển các trường enum về chữ thường nếu có
+    if (level) level = level.toLowerCase();
+    if (language) language = language.toLowerCase();
+    if (subtitleLanguage) subtitleLanguage = subtitleLanguage.toLowerCase();
 
     // Create new course
     const newCourse = new Course({
@@ -533,10 +657,211 @@ exports.createCourse = async (req, res) => {
       .populate("categoryId", "name")
       .populate("discountId", "discountCode value type");
 
+    // After course creation, check for uploaded files to move from temporary
+    const uploadedFiles = req.body.uploadedFiles || {};
+
+    const filesToMove = [];
+
+    // Check for video file (should be trailer)
+    if (uploadedFiles.video && uploadedFiles.video.url) {
+      const videoUrl = uploadedFiles.video.url;
+      const sourceDestination = extractSourceDestination(videoUrl);
+      if (sourceDestination) {
+        filesToMove.push({
+          sourceDestination,
+          folderType: "trailer",
+          fileType: "video",
+        });
+      }
+    }
+
+    // Check for image/thumbnail files
+    if (uploadedFiles.image && uploadedFiles.image.url) {
+      const imageUrl = uploadedFiles.image.url;
+      const sourceDestination = extractSourceDestination(imageUrl);
+      if (sourceDestination) {
+        filesToMove.push({
+          sourceDestination,
+          folderType: "thumbnail",
+          fileType: "image",
+        });
+      }
+    }
+
+    // Check for lesson videos (new addition)
+    if (
+      uploadedFiles.lessonVideos &&
+      Array.isArray(uploadedFiles.lessonVideos)
+    ) {
+      uploadedFiles.lessonVideos.forEach((lessonVideo, index) => {
+        if (lessonVideo.url) {
+          const videoUrl = lessonVideo.url;
+          const sourceDestination = extractSourceDestination(videoUrl);
+          if (sourceDestination) {
+            filesToMove.push({
+              sourceDestination,
+              folderType: "section-data",
+              fileType: "lesson-video",
+              lessonIndex: index,
+              originalUrl: videoUrl,
+            });
+          }
+        }
+      });
+    }
+
+    // Check for individual lesson videos (alternative format)
+    if (uploadedFiles.lessons && Array.isArray(uploadedFiles.lessons)) {
+      uploadedFiles.lessons.forEach((lesson, index) => {
+        if (lesson.videoUrl) {
+          const videoUrl = lesson.videoUrl;
+          const sourceDestination = extractSourceDestination(videoUrl);
+          if (sourceDestination) {
+            filesToMove.push({
+              sourceDestination,
+              folderType: "section-data",
+              fileType: "lesson-video",
+              lessonIndex: index,
+              originalUrl: videoUrl,
+            });
+          }
+        }
+      });
+    }
+
+    // === TỰ ĐỘNG EXTRACT LESSON VIDEO URLs TỪ SECTIONS ===
+    const inputSections = req.body.sections || [];
+    let lessonVideoIndex = 0;
+    const movedFilesMap = new Map(); // Map để lưu trữ URL mới sau khi move
+
+    inputSections.forEach((section, sectionIndex) => {
+      const lessons = section.lessons || [];
+      lessons.forEach((lesson, lessonIndex) => {
+        if (lesson.videoUrl) {
+          const videoUrl = lesson.videoUrl;
+          const sourceDestination = extractSourceDestination(videoUrl);
+          if (sourceDestination) {
+            filesToMove.push({
+              sourceDestination,
+              folderType: `section_${sectionIndex + 1}/lesson_${
+                lessonIndex + 1
+              }`, // Cấu trúc folder mới
+              fileType: "lesson-video",
+              lessonIndex: lessonVideoIndex,
+              sectionIndex: sectionIndex,
+              lessonIndexInSection: lessonIndex,
+              originalUrl: videoUrl,
+            });
+            lessonVideoIndex++;
+          }
+        }
+      });
+    });
+
+    if (filesToMove.length > 0) {
+      const movePromises = filesToMove.map(async (fileData) => {
+        try {
+          const moveResult = await moveFileFromTemporaryToCourse(
+            fileData.sourceDestination,
+            savedCourse._id,
+            fileData.folderType
+          );
+
+          // Lưu URL mới vào map để sử dụng khi tạo lesson
+          if (fileData.fileType === "lesson-video") {
+            movedFilesMap.set(fileData.originalUrl, moveResult.newUrl);
+          }
+
+          return moveResult;
+        } catch (error) {
+          return { error: error.message, file: fileData };
+        }
+      });
+
+      try {
+        const moveResults = await Promise.all(movePromises);
+      } catch (error) {
+        // Handle error silently
+      }
+    }
+
+    // === TỰ ĐỘNG TẠO SECTION VÀ LESSON ===
+    const createdSectionIds = [];
+
+    for (const sectionData of inputSections) {
+      // Validate section data
+      if (!sectionData.name || sectionData.name.trim() === "") {
+        continue;
+      }
+
+      // Tạo section
+      const newSection = new Section({
+        name: sectionData.name,
+        courseId: savedCourse._id,
+        order: sectionData.order || 0,
+        lessons: [],
+      });
+      const savedSection = await newSection.save();
+
+      // Tạo lessons cho section này
+      const inputLessons = sectionData.lessons || [];
+
+      const createdLessonIds = [];
+      for (const lessonData of inputLessons) {
+        // Validate lesson data
+        if (!lessonData.title || lessonData.title.trim() === "") {
+          continue;
+        }
+
+        // Sử dụng URL mới nếu file đã được move
+        let finalVideoUrl = lessonData.videoUrl || "";
+        if (lessonData.videoUrl && movedFilesMap.has(lessonData.videoUrl)) {
+          finalVideoUrl = movedFilesMap.get(lessonData.videoUrl);
+        }
+
+        const newLesson = new Lesson({
+          courseId: savedCourse._id,
+          sectionId: savedSection._id,
+          title: lessonData.title,
+          description: lessonData.description || "",
+          lectureNotes: lessonData.lectureNotes || "",
+          videoUrl: finalVideoUrl, // Sử dụng URL mới
+          captions: lessonData.captions || "",
+          duration: lessonData.duration || 0,
+          order: lessonData.order || 0,
+        });
+        const savedLesson = await newLesson.save();
+        createdLessonIds.push(savedLesson._id);
+      }
+
+      // Gán lessons vào section
+      savedSection.lessons = createdLessonIds;
+      await savedSection.save();
+
+      createdSectionIds.push(savedSection._id);
+    }
+
+    // Gán sections vào course
+    if (createdSectionIds.length > 0) {
+      savedCourse.sections = createdSectionIds;
+      await savedCourse.save();
+    }
+
+    // Populate lại course để trả về đầy đủ thông tin
+    const fullPopulatedCourse = await Course.findById(savedCourse._id)
+      .populate({
+        path: "sections",
+        populate: {
+          path: "lessons",
+        },
+      })
+      .populate("categoryId", "name")
+      .populate("discountId", "discountCode value type");
+
     res.status(201).json({
       success: true,
       message: "Course created successfully",
-      data: populatedCourse,
+      data: fullPopulatedCourse,
     });
   } catch (error) {
     console.error("Error in createCourse:", error);
@@ -615,13 +940,22 @@ exports.updateCourse = async (req, res) => {
 
     // Validate categoryId if provided
     if (updateData.categoryId) {
-      const category = await Category.findById(updateData.categoryId);
+      let category;
+      if (mongoose.Types.ObjectId.isValid(updateData.categoryId)) {
+        category = await Category.findById(updateData.categoryId);
+      }
+      if (!category) {
+        // Nếu không phải ObjectId hoặc không tìm thấy, thử tìm theo name
+        category = await Category.findOne({ name: updateData.categoryId });
+      }
       if (!category) {
         return res.status(400).json({
           success: false,
-          message: "Invalid category ID",
+          message: "Invalid category ID or name",
         });
       }
+      // Nếu FE truyền tên, gán lại categoryId là _id thực sự
+      updateData.categoryId = category._id;
     }
 
     // Validate discountId if provided
@@ -639,6 +973,13 @@ exports.updateCourse = async (req, res) => {
     if (updateData.price) {
       updateData.price = parseFloat(updateData.price);
     }
+
+    // Chuyển các trường enum về chữ thường nếu có
+    if (updateData.level) updateData.level = updateData.level.toLowerCase();
+    if (updateData.language)
+      updateData.language = updateData.language.toLowerCase();
+    if (updateData.subtitleLanguage)
+      updateData.subtitleLanguage = updateData.subtitleLanguage.toLowerCase();
 
     // Update the course
     const updatedCourse = await Course.findByIdAndUpdate(courseId, updateData, {
@@ -1166,3 +1507,88 @@ exports.getLesson = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Move lesson video from temporary to course folder
+ * @route   POST /api/admin/courses/:courseId/lessons/:lessonId/move-video
+ * @access  Private (Admin only)
+ */
+exports.moveLessonVideo = async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.params;
+    const { videoUrl } = req.body;
+
+    if (!videoUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "Video URL is required",
+      });
+    }
+
+    // Check if course exists
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check if lesson exists and belongs to the course
+    const lesson = await Lesson.findOne({ _id: lessonId, courseId });
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+      });
+    }
+
+    // Extract source destination from video URL
+    const sourceDestination = extractSourceDestination(videoUrl);
+    if (!sourceDestination) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid video URL format",
+      });
+    }
+
+    // Move video from temporary to course folder
+    const moveResult = await moveFileFromTemporaryToCourse(
+      sourceDestination,
+      courseId,
+      "section-data"
+    );
+
+    // Update lesson with new video URL
+    lesson.videoUrl = moveResult.newUrl;
+    await lesson.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Lesson video moved successfully",
+      data: {
+        lessonId,
+        oldUrl: videoUrl,
+        newUrl: moveResult.newUrl,
+        moveResult,
+      },
+    });
+  } catch (error) {
+    console.error("Error in moveLessonVideo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+function extractSourceDestination(firebaseUrl) {
+  // Chỉ áp dụng cho dạng: https://firebasestorage.googleapis.com/v0/b/xxx/o/temporary%2Ftrailer%2Fabc.mp4?alt=media
+  try {
+    const url = new URL(firebaseUrl);
+    const match = url.pathname.match(/\/o\/(.+)$/);
+    if (match) return decodeURIComponent(match[1]);
+  } catch (e) {}
+  return null;
+}
