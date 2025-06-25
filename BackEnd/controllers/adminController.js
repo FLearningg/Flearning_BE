@@ -17,14 +17,22 @@ const moveFileFromTemporaryToCourse = async (
   folderType
 ) => {
   try {
+    console.log("🔄 Starting file move operation:");
+    console.log("  - Source:", sourceDestination);
+    console.log("  - Course ID:", courseId);
+    console.log("  - Folder Type:", folderType);
+
     const bucket = admin.storage().bucket();
     const sourceFile = bucket.file(sourceDestination);
 
     // Check if source file exists
     const [exists] = await sourceFile.exists();
     if (!exists) {
+      console.log("❌ Source file not found:", sourceDestination);
       throw new Error(`Source file not found: ${sourceDestination}`);
     }
+
+    console.log("✅ Source file exists");
 
     // Generate new destination based on folderType
     const fileName = sourceDestination.split("/").pop();
@@ -45,25 +53,37 @@ const moveFileFromTemporaryToCourse = async (
       newDestination = `courses/${courseId}/${folderType}/${fileName}`;
     }
 
+    console.log("📁 New destination:", newDestination);
+
     const targetFile = bucket.file(newDestination);
 
     // Copy file to new location
+    console.log("📋 Copying file...");
     await sourceFile.copy(targetFile);
+    console.log("✅ File copied successfully");
 
     // Delete original file from temporary folder
+    console.log("🗑️ Deleting original file...");
     await sourceFile.delete();
+    console.log("✅ Original file deleted");
 
     // Generate new URL with proper format
     const bucketName = bucket.name;
     const encodedDestination = encodeURIComponent(newDestination);
     const newUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedDestination}?alt=media`;
 
+    console.log("🔗 New URL generated:", newUrl);
+
     // Update course with new URL if it's thumbnail or trailer
     if (folderType === "thumbnail" || folderType === "trailer") {
+      console.log("📝 Updating course with new URL...");
       const updateData = {};
       updateData[folderType] = newUrl;
       await Course.findByIdAndUpdate(courseId, updateData);
+      console.log("✅ Course updated");
     }
+
+    console.log("🎉 File move operation completed successfully");
 
     return {
       success: true,
@@ -734,13 +754,24 @@ exports.createCourse = async (req, res) => {
     let lessonVideoIndex = 0;
     const movedFilesMap = new Map(); // Map để lưu trữ URL mới sau khi move
 
+    console.log("🔍 Processing sections for file move:");
+    console.log("  - Number of sections:", inputSections.length);
+
     inputSections.forEach((section, sectionIndex) => {
       const lessons = section.lessons || [];
+      console.log(`  - Section ${sectionIndex + 1}: ${lessons.length} lessons`);
+
       lessons.forEach((lesson, lessonIndex) => {
         if (lesson.videoUrl) {
+          console.log(
+            `    - Lesson ${lessonIndex + 1} has video URL: ${lesson.videoUrl}`
+          );
           const videoUrl = lesson.videoUrl;
           const sourceDestination = extractSourceDestination(videoUrl);
           if (sourceDestination) {
+            console.log(
+              `    - Extracted source destination: ${sourceDestination}`
+            );
             filesToMove.push({
               sourceDestination,
               folderType: `section_${sectionIndex + 1}/lesson_${
@@ -753,14 +784,24 @@ exports.createCourse = async (req, res) => {
               originalUrl: videoUrl,
             });
             lessonVideoIndex++;
+          } else {
+            console.log(
+              `    - ❌ Could not extract source destination from URL`
+            );
           }
         }
       });
     });
 
+    console.log(`📋 Total files to move: ${filesToMove.length}`);
+
     if (filesToMove.length > 0) {
+      console.log("🚀 Starting file move operations...");
       const movePromises = filesToMove.map(async (fileData) => {
         try {
+          console.log(
+            `📁 Moving file: ${fileData.sourceDestination} → ${fileData.folderType}`
+          );
           const moveResult = await moveFileFromTemporaryToCourse(
             fileData.sourceDestination,
             savedCourse._id,
@@ -770,19 +811,43 @@ exports.createCourse = async (req, res) => {
           // Lưu URL mới vào map để sử dụng khi tạo lesson
           if (fileData.fileType === "lesson-video") {
             movedFilesMap.set(fileData.originalUrl, moveResult.newUrl);
+            console.log(
+              `📝 Mapped lesson video URL: ${fileData.originalUrl} → ${moveResult.newUrl}`
+            );
           }
 
           return moveResult;
         } catch (error) {
+          console.error(
+            `❌ Failed to move file: ${fileData.sourceDestination}`,
+            error.message
+          );
           return { error: error.message, file: fileData };
         }
       });
 
       try {
         const moveResults = await Promise.all(movePromises);
+        console.log("✅ All file move operations completed");
+
+        // Log results
+        const successCount = moveResults.filter((r) => r.success).length;
+        const errorCount = moveResults.filter((r) => r.error).length;
+        console.log(
+          `📊 Move results: ${successCount} success, ${errorCount} errors`
+        );
+
+        if (errorCount > 0) {
+          console.log(
+            "❌ Some files failed to move:",
+            moveResults.filter((r) => r.error)
+          );
+        }
       } catch (error) {
-        // Handle error silently
+        console.error("❌ Error in file move operations:", error.message);
       }
+    } else {
+      console.log("📁 No files to move");
     }
 
     // === TỰ ĐỘNG TẠO SECTION VÀ LESSON ===
@@ -1584,11 +1649,69 @@ exports.moveLessonVideo = async (req, res) => {
 };
 
 function extractSourceDestination(firebaseUrl) {
-  // Chỉ áp dụng cho dạng: https://firebasestorage.googleapis.com/v0/b/xxx/o/temporary%2Ftrailer%2Fabc.mp4?alt=media
+  if (!firebaseUrl || typeof firebaseUrl !== "string") {
+    console.log("❌ Invalid URL provided:", firebaseUrl);
+    return null;
+  }
+
+  console.log("🔍 Extracting source destination from URL:", firebaseUrl);
+
   try {
+    // Handle Firebase Storage URL format
+    // https://firebasestorage.googleapis.com/v0/b/bucket/o/path%2Fto%2Ffile?alt=media
+    if (firebaseUrl.includes("firebasestorage.googleapis.com")) {
+      const url = new URL(firebaseUrl);
+      const match = url.pathname.match(/\/o\/(.+)$/);
+      if (match) {
+        const decoded = decodeURIComponent(match[1]);
+        console.log("✅ Extracted from Firebase URL:", decoded);
+        return decoded;
+      }
+    }
+
+    // Handle direct Google Storage URL format
+    // https://storage.googleapis.com/bucket/path/to/file
+    if (firebaseUrl.includes("storage.googleapis.com")) {
+      const url = new URL(firebaseUrl);
+      const pathParts = url.pathname.split("/");
+      if (pathParts.length >= 3) {
+        // Remove bucket name and leading slash
+        const filePath = pathParts.slice(2).join("/");
+        console.log("✅ Extracted from Google Storage URL:", filePath);
+        return filePath;
+      }
+    }
+
+    // Handle signed URL format
+    // https://storage.googleapis.com/bucket/path/to/file?X-Goog-Algorithm=...
+    if (
+      firebaseUrl.includes("storage.googleapis.com") &&
+      firebaseUrl.includes("X-Goog-Algorithm")
+    ) {
+      const url = new URL(firebaseUrl);
+      const pathParts = url.pathname.split("/");
+      if (pathParts.length >= 3) {
+        const filePath = pathParts.slice(2).join("/");
+        console.log("✅ Extracted from signed URL:", filePath);
+        return filePath;
+      }
+    }
+
+    // Handle custom domain or other formats
+    // Try to extract path after the domain
     const url = new URL(firebaseUrl);
-    const match = url.pathname.match(/\/o\/(.+)$/);
-    if (match) return decodeURIComponent(match[1]);
-  } catch (e) {}
-  return null;
+    const path = url.pathname;
+    if (path && path.length > 1) {
+      // Remove leading slash
+      const filePath = path.substring(1);
+      console.log("✅ Extracted from custom URL:", filePath);
+      return filePath;
+    }
+
+    console.log("❌ Could not extract path from URL format");
+    return null;
+  } catch (error) {
+    console.log("❌ Error parsing URL:", error.message);
+    return null;
+  }
 }

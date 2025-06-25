@@ -1,5 +1,5 @@
 const {
-  uploadToFirebase,
+  uploadToFirebase: uploadToFirebaseStorage,
   uploadTrailer,
   uploadThumbnail,
   uploadSectionData,
@@ -247,7 +247,7 @@ exports.uploadToFirebase = async (req, res) => {
           );
         } else {
           // Upload to temporary folder
-          result = await uploadToFirebase(
+          result = await uploadToFirebaseStorage(
             filePath,
             originalname,
             mimetype,
@@ -268,7 +268,7 @@ exports.uploadToFirebase = async (req, res) => {
           );
         } else {
           // Upload to temporary folder
-          result = await uploadToFirebase(
+          result = await uploadToFirebaseStorage(
             filePath,
             originalname,
             mimetype,
@@ -289,7 +289,7 @@ exports.uploadToFirebase = async (req, res) => {
           );
         } else {
           // Upload to temporary folder
-          result = await uploadToFirebase(
+          result = await uploadToFirebaseStorage(
             filePath,
             originalname,
             mimetype,
@@ -305,7 +305,7 @@ exports.uploadToFirebase = async (req, res) => {
         if (folderType && folderType.match(/^section_\d+(\/lesson_\d+)?$/)) {
           if (courseId && courseId !== "undefined" && courseId !== "null") {
             // Upload to course-specific folder
-            result = await uploadToFirebase(
+            result = await uploadToFirebaseStorage(
               filePath,
               originalname,
               mimetype,
@@ -314,7 +314,7 @@ exports.uploadToFirebase = async (req, res) => {
             );
           } else {
             // Upload to temporary folder
-            result = await uploadToFirebase(
+            result = await uploadToFirebaseStorage(
               filePath,
               originalname,
               mimetype,
@@ -324,7 +324,7 @@ exports.uploadToFirebase = async (req, res) => {
           }
         } else {
           // For general uploads, courseId is optional
-          result = await uploadToFirebase(
+          result = await uploadToFirebaseStorage(
             filePath,
             originalname,
             mimetype,
