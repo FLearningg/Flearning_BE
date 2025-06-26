@@ -14,6 +14,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
+const discountRoutes = require("./routes/discountRoutes");
 
 const app = express();
 
@@ -41,6 +42,8 @@ app.use("/api/notifications", notificationRoutes)
 app.use("/api/cart", cartRoutes); 
 // Wishlist routes
 app.use("/api/wishlist", wishlistRoutes);
+// Discount routes  
+app.use("/api/admin/discounts", discountRoutes);
 // Profile routes
 app.use("/api/profile", profileRoutes);
 
