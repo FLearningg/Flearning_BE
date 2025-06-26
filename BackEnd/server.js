@@ -3,11 +3,13 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const cleanupTempFiles = require("./utils/cleanup-temp-files");
 
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const profileRoutes = require("./routes/profileRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
@@ -31,18 +33,24 @@ app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
 app.use("/api/profile", profileRoutes);
 
+// Admin routes (includes section, lesson management and file upload)
+app.use("/api/admin", adminRoutes);
+
 // Course routes
 app.use("/api/courses", courseRoutes);
 // Category routes
 app.use("/api/categories", categoryRoutes);
 // Notification routes
-app.use("/api/notifications", notificationRoutes)
+app.use("/api/notifications", notificationRoutes);
 // Cart routes
-app.use("/api/cart", cartRoutes); 
+app.use("/api/cart", cartRoutes);
 // Wishlist routes
 app.use("/api/wishlist", wishlistRoutes);
 // Profile routes
 app.use("/api/profile", profileRoutes);
+
+// Dọn dẹp file tạm mỗi lần server start
+cleanupTempFiles();
 
 mongoose
   .connect(process.env.MONGO_URI, {
