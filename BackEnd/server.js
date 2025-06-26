@@ -7,6 +7,7 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
@@ -28,18 +29,18 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Course routes
 app.use("/api/courses", courseRoutes);
 // Category routes
 app.use("/api/categories", categoryRoutes);
 // Notification routes
-app.use("/api/notifications", notificationRoutes)
+app.use("/api/notifications", notificationRoutes);
 // Cart routes
-app.use("/api/cart", cartRoutes); 
+app.use("/api/cart", cartRoutes);
 // Wishlist routes
 app.use("/api/wishlist", wishlistRoutes);
-
 
 mongoose
   .connect(process.env.MONGO_URI, {
