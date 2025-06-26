@@ -8,6 +8,7 @@ const cleanupTempFiles = require("./utils/cleanup-temp-files");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
+const profileRoutes = require("./routes/profileRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
@@ -30,6 +31,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
+app.use("/api/profile", profileRoutes);
 
 // Admin routes (includes section, lesson management and file upload)
 app.use("/api/admin", adminRoutes);
@@ -44,6 +46,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/cart", cartRoutes);
 // Wishlist routes
 app.use("/api/wishlist", wishlistRoutes);
+// Profile routes
+app.use("/api/profile", profileRoutes);
 
 // Dọn dẹp file tạm mỗi lần server start
 cleanupTempFiles();
