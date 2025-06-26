@@ -407,3 +407,43 @@ exports.resendVerificationEmail = async (req, res) => {
     res.status(500).json({ message: "Lỗi máy chủ" });
   }
 };
+
+/**
+ * @desc    Forgot password
+ * @route   POST /api/auth/forgot-password
+ * @access  Public
+ */
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res
+        .status(200)
+        .json({
+          message:
+            "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+        });
+    }
+
+    let token = await Token.findOne({ userId: user._id });
+    if (token) await token.deleteOne();
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    await new Token({ userId: user._id, token: resetToken }).save();
+
+    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
+    const htmlMessage = `<p>Vui lòng nhấp vào nút dưới đây để đặt lại mật khẩu (liên kết có hiệu lực trong 1 giờ):</p><a href="${resetUrl}" target="_blank">Đặt lại mật khẩu</a>`;
+
+    await sendEmail(user.email, "Yêu cầu đặt lại mật khẩu", htmlMessage);
+    res
+      .status(200)
+      .json({
+        message:
+          "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+      });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi máy chủ" });
+  }
+};
