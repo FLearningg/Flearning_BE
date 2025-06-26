@@ -21,6 +21,7 @@ const {
   moveLessonVideo,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
+const { getDashboardStats } = require("../controllers/adminController");
 const upload = require("../middlewares/uploadMiddleware");
 const {
   uploadToFirebase,
@@ -79,5 +80,7 @@ router.post("/test-detect-folder", testDetectFolder);
 router.post("/test-firebase-url", testFirebaseUrl);
 router.post("/test-url-access", testUrlAccess);
 router.post("/fix-cors-url", fixCorsUrl);
+
+router.get("/stats", authorize("admin"), getDashboardStats);
 
 module.exports = router;

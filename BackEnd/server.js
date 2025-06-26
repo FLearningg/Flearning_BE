@@ -30,6 +30,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
+
 // Admin routes (includes section, lesson management and file upload)
 app.use("/api/admin", adminRoutes);
 
