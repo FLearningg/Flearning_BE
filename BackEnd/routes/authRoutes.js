@@ -1,14 +1,14 @@
 const express = require("express");
-const { 
-    register, 
-    login, 
-    verifyEmail, 
-    googleLogin, 
-    refreshToken, 
-    logout, 
-    forgotPassword, 
-    resetPassword,
-    resendVerificationEmail 
+const {
+  register,
+  login,
+  verifyEmail,
+  googleLogin,
+  refreshToken,
+  logout,
+  forgotPassword,
+  resetPassword,
+  resendVerificationEmail,
 } = require("../controllers/authController");
 
 const router = express.Router();
