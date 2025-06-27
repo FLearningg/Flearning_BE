@@ -19,7 +19,7 @@ const CourseSchema = new Schema(
     studentsEnrolled: [{ type: Schema.Types.ObjectId, ref: "User" }],
     thumbnail: String,
     trailer: String,
-    categoryId: { type: Schema.Types.ObjectId, ref: "Category" },
+    categoryIds: [{ type: Schema.Types.ObjectId, ref: "Category" }],
     price: Number,
     discountId: { type: Schema.Types.ObjectId, ref: "Discount" },
     rating: Number,
