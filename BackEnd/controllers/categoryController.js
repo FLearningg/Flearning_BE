@@ -33,6 +33,7 @@ const CategoryController = {
           $project: {
             _id: 1,
             name: 1, // Name of the category
+            icon: 1, // Icon of the category
             courseCount: 1, // Number of courses
           },
         },
