@@ -19,6 +19,7 @@ const {
   deleteLesson,
   getLesson,
   moveLessonVideo,
+  getAllCategories,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -82,5 +83,7 @@ router.post("/test-url-access", testUrlAccess);
 router.post("/fix-cors-url", fixCorsUrl);
 
 router.get("/stats", authorize("admin"), getDashboardStats);
+
+router.get("/categories", getAllCategories);
 
 module.exports = router;

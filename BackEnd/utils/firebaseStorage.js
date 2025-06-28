@@ -26,26 +26,27 @@ try {
   });
 } catch (error) {
   // Fallback to JSON file if environment variables are not available
-  const serviceAccount = require("../config/firebase-service-account.json");
-  admin = require("firebase-admin");
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
+  // const serviceAccount = require("../config/firebase-service-account.json");
+  // admin = require("firebase-admin");
+  // admin.initializeApp({
+  //   credential: admin.credential.cert(serviceAccount),
+  //   storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  // });
 }
 
 const bucket = admin.storage().bucket();
 
 // Helper: luôn thêm timestamp vào tên file
 function appendTimestampToFileName(fileName) {
+  // Remove special characters and spaces, replace with underscore
+  const sanitizedName = fileName.replace(/[^a-zA-Z0-9.]/g, "_");
   const timestamp = Date.now();
-  const dotIndex = fileName.lastIndexOf(".");
-  if (dotIndex === -1) return `${fileName}_${timestamp}`;
-  return `${fileName.slice(0, dotIndex)}_${timestamp}${fileName.slice(
+  const dotIndex = sanitizedName.lastIndexOf(".");
+  if (dotIndex === -1) return `${sanitizedName}_${timestamp}`;
+  return `${sanitizedName.slice(0, dotIndex)}_${timestamp}${sanitizedName.slice(
     dotIndex
   )}`;
 }
-
 /**
  * Create folder structure in Firebase Storage
  * @param {string} courseId - Course ID

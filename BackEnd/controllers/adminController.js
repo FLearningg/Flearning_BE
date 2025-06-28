@@ -551,6 +551,32 @@ exports.getAllCourses = async (req, res) => {
   }
 };
 
+// Helper to normalize and validate categoryIds from request
+async function extractValidCategoryIds(reqBody) {
+  let { category, subCategory, categoryId, categoryIds, subCategoryId } =
+    reqBody;
+  let allCategories = [];
+  if (Array.isArray(categoryIds))
+    allCategories = allCategories.concat(categoryIds);
+  if (categoryId) allCategories.push(categoryId);
+  if (category) allCategories.push(category);
+  if (subCategory) allCategories.push(subCategory);
+  if (subCategoryId) allCategories.push(subCategoryId);
+  allCategories = [...new Set(allCategories.filter(Boolean))];
+  const validCategories = [];
+  for (const catId of allCategories) {
+    let cat;
+    if (mongoose.Types.ObjectId.isValid(catId)) {
+      cat = await Category.findById(catId);
+    }
+    if (!cat) {
+      cat = await Category.findOne({ name: catId });
+    }
+    if (cat) validCategories.push(cat._id);
+  }
+  return validCategories;
+}
+
 /**
  * @desc    Create a new course
  * @route   POST /api/admin/courses
@@ -561,13 +587,12 @@ exports.createCourse = async (req, res) => {
     let {
       title,
       subTitle,
-      subtitle, // Add support for lowercase subtitle
+      subtitle,
       message,
       detail,
       materials,
       thumbnail,
       trailer,
-      categoryId,
       price,
       discountId,
       level,
@@ -576,28 +601,22 @@ exports.createCourse = async (req, res) => {
       subtitleLanguage,
     } = req.body;
 
-    // Fix: Support both subTitle and subtitle from frontend
     if (!subTitle && subtitle) {
       subTitle = subtitle;
     }
 
-    // Validate required fields with detailed error messages
+    // Validate required fields
     const errors = [];
-    if (!title || title.trim() === "") {
+    if (!title || title.trim() === "")
       errors.push("title is required and cannot be empty");
-    }
-    if (!subTitle || subTitle.trim() === "") {
+    if (!subTitle || subTitle.trim() === "")
       errors.push("subTitle is required and cannot be empty");
-    }
-    if (!detail || typeof detail !== "object") {
+    if (!detail || typeof detail !== "object")
       errors.push("detail object is required");
-    } else if (!detail.description || detail.description.trim() === "") {
+    else if (!detail.description || detail.description.trim() === "")
       errors.push("detail.description is required and cannot be empty");
-    }
-    if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+    if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0)
       errors.push("price is required and must be a positive number");
-    }
-
     if (errors.length > 0) {
       return res.status(400).json({
         success: false,
@@ -607,43 +626,28 @@ exports.createCourse = async (req, res) => {
       });
     }
 
-    // Validate categoryId if provided
-    if (categoryId) {
-      let category;
-      if (mongoose.Types.ObjectId.isValid(categoryId)) {
-        category = await Category.findById(categoryId);
-      }
-      if (!category) {
-        // Nếu không phải ObjectId hoặc không tìm thấy, thử tìm theo name
-        category = await Category.findOne({ name: categoryId });
-      }
-      if (!category) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid category ID or name",
-        });
-      }
-      // Nếu FE truyền tên, gán lại categoryId là _id thực sự
-      categoryId = category._id;
+    // Gộp và validate categoryIds
+    const validCategories = await extractValidCategoryIds(req.body);
+    if (validCategories.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No valid categories" });
     }
 
     // Validate discountId if provided
     if (discountId) {
       const discount = await Discount.findById(discountId);
       if (!discount) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid discount ID",
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid discount ID" });
       }
     }
 
-    // Chuyển các trường enum về chữ thường nếu có
     if (level) level = level.toLowerCase();
     if (language) language = language.toLowerCase();
     if (subtitleLanguage) subtitleLanguage = subtitleLanguage.toLowerCase();
 
-    // Create new course
     const newCourse = new Course({
       title,
       subTitle,
@@ -660,7 +664,7 @@ exports.createCourse = async (req, res) => {
       materials: materials || [],
       thumbnail,
       trailer,
-      categoryId,
+      categoryIds: validCategories,
       price: parseFloat(price),
       discountId,
       level: level || "beginner",
@@ -675,7 +679,7 @@ exports.createCourse = async (req, res) => {
 
     // Populate category and discount information
     const populatedCourse = await Course.findById(savedCourse._id)
-      .populate("categoryId", "name")
+      .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type");
 
     // After course creation, check for uploaded files to move from temporary
@@ -915,13 +919,8 @@ exports.createCourse = async (req, res) => {
 
     // Populate lại course để trả về đầy đủ thông tin
     const fullPopulatedCourse = await Course.findById(savedCourse._id)
-      .populate({
-        path: "sections",
-        populate: {
-          path: "lessons",
-        },
-      })
-      .populate("categoryId", "name")
+      .populate({ path: "sections", populate: { path: "lessons" } })
+      .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type");
 
     res.status(201).json({
@@ -931,11 +930,9 @@ exports.createCourse = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in createCourse:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
@@ -998,49 +995,28 @@ exports.updateCourse = async (req, res) => {
     // Check if course exists
     const existingCourse = await Course.findById(courseId);
     if (!existingCourse) {
-      return res.status(404).json({
-        success: false,
-        message: "Course not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Course not found" });
     }
 
-    // Validate categoryId if provided
-    if (updateData.categoryId) {
-      let category;
-      if (mongoose.Types.ObjectId.isValid(updateData.categoryId)) {
-        category = await Category.findById(updateData.categoryId);
-      }
-      if (!category) {
-        // Nếu không phải ObjectId hoặc không tìm thấy, thử tìm theo name
-        category = await Category.findOne({ name: updateData.categoryId });
-      }
-      if (!category) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid category ID or name",
-        });
-      }
-      // Nếu FE truyền tên, gán lại categoryId là _id thực sự
-      updateData.categoryId = category._id;
+    // Gộp và validate categoryIds nếu có dữ liệu liên quan
+    const validCategories = await extractValidCategoryIds(updateData);
+    if (validCategories.length > 0) {
+      updateData.categoryIds = validCategories;
     }
 
     // Validate discountId if provided
     if (updateData.discountId) {
       const discount = await Discount.findById(updateData.discountId);
       if (!discount) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid discount ID",
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid discount ID" });
       }
     }
 
-    // Convert price to number if provided
-    if (updateData.price) {
-      updateData.price = parseFloat(updateData.price);
-    }
-
-    // Chuyển các trường enum về chữ thường nếu có
+    if (updateData.price) updateData.price = parseFloat(updateData.price);
     if (updateData.level) updateData.level = updateData.level.toLowerCase();
     if (updateData.language)
       updateData.language = updateData.language.toLowerCase();
@@ -1052,7 +1028,7 @@ exports.updateCourse = async (req, res) => {
       new: true,
       runValidators: true,
     })
-      .populate("categoryId", "name")
+      .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type")
       .populate("sections", "name");
 
@@ -1063,11 +1039,9 @@ exports.updateCourse = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in updateCourse:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
@@ -1803,3 +1777,23 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get all categories (admin)
+ * @route   GET /api/admin/categories
+ * @access  Private (Admin only)
+ */
+exports.getAllCategories = async (req, res) => {
+  try {
+    const categories = await Category.find({}, { _id: 1, name: 1 });
+    res.status(200).json({
+      success: true,
+      data: categories,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
