@@ -38,7 +38,14 @@ const io = socketIo(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
-  transports: ["websocket", "polling"],
+  transports: ["polling", "websocket"],
+  allowEIO3: true,
+  pingTimeout: 30000,
+  pingInterval: 10000,
+  maxHttpBufferSize: 1e6,
+  compression: true,
+  httpCompression: true,
+  cookie: false,
 });
 console.log("✅ [SERVER] Socket.IO initialized with CORS");
 
@@ -60,6 +67,28 @@ app.use(express.json());
 app.use(cookieParser());
 
 console.log("✅ [SERVER] Middleware configured");
+
+// Health check endpoint for Render
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+    uptime: process.uptime(),
+  });
+});
+
+// Additional health endpoint with more details
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+    clientUrl: process.env.CLIENT_URL || "Not set",
+    socketConnections: io ? io.engine.clientsCount : 0,
+    uptime: process.uptime(),
+  });
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
