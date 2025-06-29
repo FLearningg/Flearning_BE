@@ -251,12 +251,12 @@ const getEnrolledCourses = async (req, res) => {
         path: "courseId",
         model: "Course",
         populate: {
-          path: "categoryId",
+          path: "categoryIds",
           model: "Category",
           select: "name",
         },
         select:
-          "title subTitle thumbnail price rating level duration language categoryId createdAt",
+          "title subTitle thumbnail price rating level duration language categoryIds createdAt",
       })
       .sort({ createdAt: -1 }); // Sort by enrollment date (newest first)
 
@@ -297,8 +297,8 @@ const getEnrolledCourses = async (req, res) => {
         level: enrollment.courseId.level,
         duration: enrollment.courseId.duration,
         language: enrollment.courseId.language,
-        category: enrollment.courseId.categoryId
-          ? enrollment.courseId.categoryId.name
+        category: enrollment.courseId.categoryIds && enrollment.courseId.categoryIds.length > 0
+          ? enrollment.courseId.categoryIds[0].name
           : null,
         createdAt: enrollment.courseId.createdAt,
       },
@@ -339,9 +339,9 @@ const getPurchaseHistory = async (req, res) => {
       .populate({
         path: "courseId",
         model: "Course",
-        select: "title subTitle thumbnail price categoryId",
+        select: "title subTitle thumbnail price categoryIds",
         populate: {
-          path: "categoryId",
+          path: "categoryIds",
           model: "Category",
           select: "name",
         },
@@ -391,8 +391,8 @@ const getPurchaseHistory = async (req, res) => {
             subTitle: payment.courseId.subTitle,
             thumbnail: payment.courseId.thumbnail,
             price: payment.courseId.price,
-            category: payment.courseId.categoryId
-              ? payment.courseId.categoryId.name
+            category: payment.courseId.categoryIds && payment.courseId.categoryIds.length > 0
+              ? payment.courseId.categoryIds[0].name
               : null,
           }
         : null,
