@@ -26,27 +26,26 @@ try {
   });
 } catch (error) {
   // Fallback to JSON file if environment variables are not available
-  // const serviceAccount = require("../config/firebase-service-account.json");
-  // admin = require("firebase-admin");
-  // admin.initializeApp({
-  //   credential: admin.credential.cert(serviceAccount),
-  //   storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  // });
+  const serviceAccount = require("../config/firebase-service-account.json");
+  admin = require("firebase-admin");
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  });
 }
 
 const bucket = admin.storage().bucket();
 
-// Helper: luôn thêm timestamp vào tên file
+// Helper: luôn thêm timestamp vào tên file và sanitize filename
 function appendTimestampToFileName(fileName) {
   // Remove special characters and spaces, replace with underscore
-  const sanitizedName = fileName.replace(/[^a-zA-Z0-9.]/g, "_");
+  const sanitizedName = fileName.replace(/[^a-zA-Z0-9.]/g, '_');
   const timestamp = Date.now();
-  const dotIndex = sanitizedName.lastIndexOf(".");
+  const dotIndex = sanitizedName.lastIndexOf('.');
   if (dotIndex === -1) return `${sanitizedName}_${timestamp}`;
-  return `${sanitizedName.slice(0, dotIndex)}_${timestamp}${sanitizedName.slice(
-    dotIndex
-  )}`;
+  return `${sanitizedName.slice(0, dotIndex)}_${timestamp}${sanitizedName.slice(dotIndex)}`;
 }
+
 /**
  * Create folder structure in Firebase Storage
  * @param {string} courseId - Course ID
@@ -124,40 +123,41 @@ async function uploadToFirebase(
   folderType = "general"
 ) {
   try {
+    console.log(`Starting upload for file: ${fileName}`);
+    console.log(`File details:
+      - Path: ${filePath}
+      - Size: ${fs.statSync(filePath).size} bytes
+      - MIME Type: ${mimeType}
+      - Course ID: ${courseId}
+      - Folder Type: ${folderType}
+    `);
+
     const bucket = admin.storage().bucket();
 
     // Generate unique filename with timestamp
-    const timestamp = Date.now();
     const uniqueFileName = appendTimestampToFileName(fileName);
+    console.log(`Sanitized and timestamped filename: ${uniqueFileName}`);
 
     let destination;
     let tempFolderPath;
 
     if (courseId) {
-      // Upload to course-specific folder
       destination = `courses/${courseId}/${folderType}/${uniqueFileName}`;
     } else {
-      // Upload to temporary folder
       tempFolderPath = `temporary/${folderType}/`;
-
-      // Ensure temporary folder exists
-      const placeholderFile = bucket.file(tempFolderPath + ".placeholder");
-      await placeholderFile.save("", {
-        metadata: {
-          contentType: "text/plain",
-        },
-      });
-
       destination = tempFolderPath + uniqueFileName;
     }
+    console.log(`Final destination path: ${destination}`);
 
     // Upload file
+    console.log(`Uploading to destination: ${destination}`);
     await bucket.upload(filePath, {
       destination: destination,
       metadata: {
         contentType: mimeType,
       },
     });
+    console.log('Upload completed successfully');
 
     // Make file public for direct access
     const file = bucket.file(destination);
@@ -364,6 +364,96 @@ async function checkCourseFolders(courseId) {
   }
 }
 
+/**
+ * Create user avatar folder structure in Firebase Storage
+ * @returns {string} - Created folder path
+ */
+async function createUserAvatarFolder() {
+  try {
+    const folderPath = `UserAvatar/`;
+
+    // Create a placeholder file to ensure the folder exists
+    const placeholderFile = bucket.file(folderPath + ".placeholder");
+    await placeholderFile.save("", {
+      metadata: {
+        contentType: "text/plain",
+      },
+    });
+
+    return folderPath;
+  } catch (error) {
+    throw new Error(`Failed to create folder: ${error.message}`);
+  }
+}
+
+/**
+ * Upload user avatar to Firebase Storage
+ * @param {string} filePath - Local file path
+ * @param {string} fileName - Original file name
+ * @param {string} mimeType - File MIME type
+ * @param {string} userId - User ID
+ * @returns {Object} - Upload result with URLs
+ */
+async function uploadUserAvatar(filePath, fileName, mimeType, userId) {
+  try {
+    // Ensure UserAvatar folder exists
+    await createUserAvatarFolder();
+
+    // Generate unique filename with timestamp
+    const uniqueFileName = appendTimestampToFileName(fileName);
+    const destination = `UserAvatar/${userId}/${uniqueFileName}`;
+
+    // Upload file
+    await bucket.upload(filePath, {
+      destination: destination,
+      metadata: {
+        contentType: mimeType,
+      },
+    });
+
+    // Make file public for direct access
+    const file = bucket.file(destination);
+    await file.makePublic();
+
+    // Generate signed URL for better access
+    let signedUrl = null;
+    try {
+      const options = {
+        version: "v4",
+        action: "read",
+        expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+      };
+      const [url] = await file.getSignedUrl(options);
+      signedUrl = url;
+    } catch (error) {
+      // Signed URL generation failed, continue with public URL
+    }
+
+    // Generate URLs
+    const bucketName = bucket.name;
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
+    const firebaseUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(
+      destination
+    )}?alt=media`;
+
+    // Choose best URL (signed URL if available, otherwise public URL)
+    const bestUrl = signedUrl || publicUrl;
+
+    return {
+      success: true,
+      fileName: uniqueFileName,
+      destination: destination,
+      url: bestUrl,
+      publicUrl: publicUrl,
+      firebaseUrl: firebaseUrl,
+      signedUrl: signedUrl,
+    };
+  } catch (error) {
+    console.error("Error uploading user avatar:", error);
+    throw error;
+  }
+}
+
 module.exports = {
   uploadToFirebase,
   uploadTrailer,
@@ -375,4 +465,6 @@ module.exports = {
   initializeCourseFolder, // New function to initialize all folders
   createCourseFolder, // New function to create specific folder
   checkCourseFolders, // New function to check folder existence
+  uploadUserAvatar, // Function to upload user avatars
+  createUserAvatarFolder, // Function to create user avatar folders
 };

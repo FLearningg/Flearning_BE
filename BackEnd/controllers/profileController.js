@@ -4,7 +4,7 @@ const Course = require("../models/courseModel");
 const Payment = require("../models/paymentModel");
 const Transaction = require("../models/transactionModel");
 const mongoose = require("mongoose");
-const { uploadImage, deleteFile } = require("../utils/googleDriveUploader");
+const { uploadUserAvatar, deleteFromFirebase } = require("../utils/firebaseStorage");
 const fs = require("fs");
 
 /**
@@ -113,24 +113,31 @@ const updateProfile = async (req, res) => {
           throw new Error("Upload file not found");
         }
 
-        const uploadResult = await uploadImage(uploadedFilePath);
+        // Upload to Firebase Storage using the new uploadUserAvatar function
+        const uploadResult = await uploadUserAvatar(
+          uploadedFilePath,
+          req.file.originalname,
+          req.file.mimetype,
+          userId,
+          currentUser.userName
+        );
         
         // Delete old image if it exists
         if (currentUser.userImage) {
           try {
-            // Extract fileId from the old image URL
-            const fileId = currentUser.userImage.split('/d/')[1].split('=')[0];
-            if (fileId) {
-              await deleteFile(fileId).catch(err => {
+            // Extract file path from the old image URL
+            const oldImagePath = extractSourceDestination(currentUser.userImage);
+            if (oldImagePath) {
+              await deleteFromFirebase(oldImagePath).catch(err => {
                 console.warn("Failed to delete old image:", err.message);
               });
             }
           } catch (deleteError) {
-            console.warn("Error extracting old image ID:", deleteError.message);
+            console.warn("Error deleting old image:", deleteError.message);
           }
         }
         
-        updateData.userImage = uploadResult.userImage;
+        updateData.userImage = uploadResult.url;
       } catch (uploadError) {
         console.error("Upload error details:", uploadError);
         return res.status(500).json({
@@ -193,6 +200,38 @@ const updateProfile = async (req, res) => {
     });
   }
 };
+
+// Helper function to extract file path from Firebase URL
+function extractSourceDestination(firebaseUrl) {
+  if (!firebaseUrl || typeof firebaseUrl !== "string") {
+    return null;
+  }
+
+  try {
+    // Handle Firebase Storage URL format
+    if (firebaseUrl.includes("firebasestorage.googleapis.com")) {
+      const url = new URL(firebaseUrl);
+      const match = url.pathname.match(/\/o\/(.+)$/);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+    }
+
+    // Handle direct Google Storage URL format
+    if (firebaseUrl.includes("storage.googleapis.com")) {
+      const url = new URL(firebaseUrl);
+      const pathParts = url.pathname.split("/");
+      if (pathParts.length >= 3) {
+        return pathParts.slice(2).join("/");
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Error parsing URL:", error.message);
+    return null;
+  }
+}
 
 /**
  * @desc    Get enrolled courses for user

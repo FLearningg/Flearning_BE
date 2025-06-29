@@ -7,7 +7,7 @@ const {
   getPurchaseHistory,
 } = require("../controllers/profileController");
 const authorize = require("../middlewares/authMiddleware");
-const { uploadSingle } = require("../middlewares/driveMiddleware");
+const upload = require("../middlewares/uploadMiddleware");
 
 /**
  * @route   GET /api/profile
@@ -21,7 +21,7 @@ router.get("/", authorize(), getProfile);
  * @desc    Update user profile (firstName, lastName, userName, email, biography, userImage)
  * @access  Private
  */
-router.put("/", authorize(), ...uploadSingle("userImage"), updateProfile);
+router.put("/", authorize(), upload.single("userImage"), updateProfile);
 
 /**
  * @route   GET /api/profile/enrolled-courses
