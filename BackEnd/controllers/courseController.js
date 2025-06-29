@@ -15,7 +15,7 @@ const courseController = {
     getAllCourses: async (req, res) => {
         try {
             const courses = await Course.find()
-                .populate('categoryId') // Populate categoryId to get category details
+                .populate('categoryIds') // Populate categoryId to get category details
                 .populate('discountId')
                 .populate('sections');
             if (!courses || courses.length === 0) {
@@ -41,7 +41,7 @@ const courseController = {
                     { 'detail.description': { $regex: keyword, $options: 'i' } }
                 ]
             })
-                .populate('categoryId')
+                .populate('categoryIds')
                 .populate('discountId')
                 .populate('sections');
             if (!courses || courses.length === 0) {
@@ -71,7 +71,7 @@ const courseController = {
             ]);
             // Populate all fields after aggregate
             const populatedCourses = await Course.populate(courses, [
-                { path: 'categoryId' },
+                { path: 'categoryIds' },
                 { path: 'discountId' },
                 { path: 'sections' }
             ]);
@@ -95,7 +95,7 @@ const courseController = {
             const courses = await Course.find()
                 .sort({ createdAt: -1 }) // Sort by creation date desc
                 .limit(limit)
-                .populate('categoryId')
+                .populate('categoryIds')
                 .populate('discountId')
                 .populate('sections');
             if (!courses || courses.length === 0) {
