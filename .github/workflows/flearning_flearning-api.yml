@@ -1,6 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
 name: Build and deploy Node.js app to Azure Web App - flearning-api
 
 on:
@@ -13,24 +10,33 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js version
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
 
+      - name: Validate package.json
+        working-directory: ./BackEnd
+        run: |
+          cat package.json
+          node -e "require('./package.json')"
+
       - name: npm install, build, and test
+        working-directory: ./BackEnd
         run: |
           npm install
           npm run build --if-present
           npm run test --if-present
 
-      - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+      - name: Zip backend folder for deployment
+        run: |
+          cd BackEnd
+          zip -r ../release.zip . -x "*.git*" -x "*node_modules*" -x "*.github*"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -42,8 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
+      id-token: write
+      contents: read
 
     steps:
       - name: Download artifact from build job
@@ -53,7 +59,7 @@ jobs:
 
       - name: Unzip artifact for deployment
         run: unzip release.zip
-      
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -61,11 +67,10 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_69C25F6574894163A735A87773C4F9DA }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E260C1CA160E4EC7B78283FDE5727535 }}
 
-      - name: 'Deploy to Azure Web App'
+      - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'flearning-api'
           slot-name: 'Production'
           package: .
-          
