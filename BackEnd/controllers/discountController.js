@@ -40,13 +40,13 @@ exports.getAllDiscounts = async (req, res) => {
     if (!discounts || discounts.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy discount nào",
+        message: "No discounts found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: "Lấy danh sách discount thành công",
+      message: "Get discounts list successfully",
       data: {
         discounts,
         pagination: {
@@ -62,7 +62,7 @@ exports.getAllDiscounts = async (req, res) => {
     console.error("Get all discounts error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
@@ -82,20 +82,20 @@ exports.getDiscountById = async (req, res) => {
     if (!discount) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy discount",
+        message: "Discount not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: "Lấy thông tin discount thành công",
+      message: "Get discount information successfully",
       data: discount,
     });
   } catch (error) {
     console.error("Get discount by ID error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
@@ -127,8 +127,37 @@ exports.createDiscount = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Vui lòng cung cấp đầy đủ thông tin bắt buộc (discountCode, description, category, type, value)",
+          "Please provide all required fields (discountCode, description, category, type, value)",
       });
+    }
+
+    // Validate category enum
+    const validCategories = ["general", "seasonal", "welcome", "special"];
+    if (!validCategories.includes(category)) {
+      return res.status(400).json({
+        success: false,
+        message: `Category must be one of: ${validCategories.join(", ")}`,
+      });
+    }
+
+    // Validate type enum
+    const validTypes = ["percent", "fixedAmount"];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Type must be one of: ${validTypes.join(", ")}`,
+      });
+    }
+
+    // Validate status enum if provided
+    if (status) {
+      const validStatuses = ["active", "expired", "inActive"];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Status must be one of: ${validStatuses.join(", ")}`,
+        });
+      }
     }
 
     // Check if discount code already exists
@@ -136,7 +165,7 @@ exports.createDiscount = async (req, res) => {
     if (existingDiscount) {
       return res.status(400).json({
         success: false,
-        message: "Mã giảm giá đã tồn tại",
+        message: "Discount code already exists",
       });
     }
 
@@ -144,7 +173,7 @@ exports.createDiscount = async (req, res) => {
     if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
       return res.status(400).json({
         success: false,
-        message: "Ngày bắt đầu phải nhỏ hơn ngày kết thúc",
+        message: "Start date must be earlier than end date",
       });
     }
 
@@ -152,14 +181,14 @@ exports.createDiscount = async (req, res) => {
     if (type === "percent" && (value < 0 || value > 100)) {
       return res.status(400).json({
         success: false,
-        message: "Giá trị phần trăm phải từ 0 đến 100",
+        message: "Percentage value must be between 0 and 100",
       });
     }
 
     if (type === "fixedAmount" && value < 0) {
       return res.status(400).json({
         success: false,
-        message: "Giá trị giảm giá phải lớn hơn 0",
+        message: "Discount value must be greater than 0",
       });
     }
 
@@ -183,14 +212,14 @@ exports.createDiscount = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Tạo discount thành công",
+      message: "Create discount successfully",
       data: savedDiscount,
     });
   } catch (error) {
     console.error("Create discount error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
@@ -211,8 +240,41 @@ exports.updateDiscount = async (req, res) => {
     if (!existingDiscount) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy discount",
+        message: "Discount not found",
       });
+    }
+
+    // Validate category enum if provided
+    if (updateData.category) {
+      const validCategories = ["general", "seasonal", "welcome", "special"];
+      if (!validCategories.includes(updateData.category)) {
+        return res.status(400).json({
+          success: false,
+          message: `Category must be one of: ${validCategories.join(", ")}`,
+        });
+      }
+    }
+
+    // Validate type enum if provided
+    if (updateData.type) {
+      const validTypes = ["percent", "fixedAmount"];
+      if (!validTypes.includes(updateData.type)) {
+        return res.status(400).json({
+          success: false,
+          message: `Type must be one of: ${validTypes.join(", ")}`,
+        });
+      }
+    }
+
+    // Validate status enum if provided
+    if (updateData.status) {
+      const validStatuses = ["active", "expired", "inActive"];
+      if (!validStatuses.includes(updateData.status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Status must be one of: ${validStatuses.join(", ")}`,
+        });
+      }
     }
 
     // Check if discount code already exists (excluding current discount)
@@ -224,7 +286,7 @@ exports.updateDiscount = async (req, res) => {
       if (duplicateDiscount) {
         return res.status(400).json({
           success: false,
-          message: "Mã giảm giá đã tồn tại",
+          message: "Discount code already exists",
         });
       }
     }
@@ -237,7 +299,7 @@ exports.updateDiscount = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Ngày bắt đầu phải nhỏ hơn ngày kết thúc",
+        message: "Start date must be earlier than end date",
       });
     }
 
@@ -249,7 +311,7 @@ exports.updateDiscount = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Giá trị phần trăm phải từ 0 đến 100",
+        message: "Percentage value must be between 0 and 100",
       });
     }
 
@@ -260,7 +322,7 @@ exports.updateDiscount = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Giá trị giảm giá phải lớn hơn 0",
+        message: "Discount value must be greater than 0",
       });
     }
 
@@ -281,14 +343,14 @@ exports.updateDiscount = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Cập nhật discount thành công",
+      message: "Update discount successfully",
       data: updatedDiscount,
     });
   } catch (error) {
     console.error("Update discount error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
@@ -308,7 +370,7 @@ exports.deleteDiscount = async (req, res) => {
     if (!discount) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy discount",
+        message: "Discount not found",
       });
     }
 
@@ -317,7 +379,7 @@ exports.deleteDiscount = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Không thể xóa discount đã được sử dụng. Hãy đặt trạng thái thành 'inActive' thay vì xóa.",
+          "Cannot delete discount that has been used. Please set status to 'inActive' instead of deleting.",
       });
     }
 
@@ -326,13 +388,13 @@ exports.deleteDiscount = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Xóa discount thành công",
+      message: "Delete discount successfully",
     });
   } catch (error) {
     console.error("Delete discount error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
@@ -362,7 +424,7 @@ exports.getDiscountStats = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Lấy thống kê discount thành công",
+      message: "Get discount statistics successfully",
       data: {
         overview: {
           total: totalDiscounts,
@@ -377,7 +439,7 @@ exports.getDiscountStats = async (req, res) => {
     console.error("Get discount stats error:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: "Server error",
       error: error.message,
     });
   }
