@@ -120,58 +120,6 @@ exports.verifyEmail = async (req, res) => {
 };
 
 /**
- * @desc    Login user with email and password
- * @route   POST /api/auth/login
- * @access  Public
- */
-exports.login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email }).select("+password");
-
-    // 1. Kiểm tra user có tồn tại không
-    if (!user) {
-      // Nếu không có user, trả về lỗi mật khẩu sai luôn
-      return res
-        .status(400)
-        .json({ message: "Email hoặc mật khẩu không đúng." });
-    }
-
-    // 2. Kiểm tra mật khẩu ĐẦU TIÊN (đã bỏ qua bước kiểm tra password null)
-    const isMatch = await bcrypt.compare(password, user.password || ""); // So sánh với chuỗi rỗng nếu password là null
-    if (!isMatch) {
-      return res
-        .status(400)
-        .json({ message: "Email hoặc mật khẩu không đúng." });
-    }
-
-    // 3. CHỈ KHI mật khẩu đúng, MỚI kiểm tra đến status
-    if (user.status === "unverified") {
-      return res.status(403).json({
-        message: "Vui lòng xác thực email của bạn trước khi đăng nhập.",
-        errorCode: "ACCOUNT_NOT_VERIFIED",
-      });
-    }
-
-    // Nếu tất cả đều qua, đăng nhập thành công
-    const { accessToken, refreshToken } = generateTokens(user);
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    const userObject = user.toObject();
-    delete userObject.password;
-
-    res.status(200).json({ accessToken, user: userObject });
-  } catch (error) {
-    res.status(500).json({ message: "Lỗi máy chủ", error: error.message });
-  }
-};
-
-/**
  * @desc    Login or Register with Google
  * @route   POST /api/auth/google
  * @access  Public
@@ -193,7 +141,15 @@ exports.googleLogin = async (req, res) => {
 
     let user = await User.findOne({ email });
 
-    if (!user) {
+    if (user) {
+      if (user.status === "banned") {
+        return res.status(403).json({
+          message:
+            "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
+          errorCode: "ACCOUNT_BANNED",
+        });
+      }
+    } else {
       user = new User({
         firstName: name.split(" ")[0],
         lastName: name.split(" ").slice(1).join(" "),
@@ -207,6 +163,7 @@ exports.googleLogin = async (req, res) => {
       await user.save();
     }
 
+    // Nếu mọi thứ ổn, tạo token và đăng nhập
     const { accessToken, refreshToken } = generateTokens(user);
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -214,6 +171,7 @@ exports.googleLogin = async (req, res) => {
       sameSite: "strict",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+
     const userObject = user.toObject();
     delete userObject.password;
 
@@ -419,12 +377,10 @@ exports.forgotPassword = async (req, res) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res
-        .status(200)
-        .json({
-          message:
-            "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
-        });
+      return res.status(200).json({
+        message:
+          "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+      });
     }
 
     let token = await Token.findOne({ userId: user._id });
@@ -437,12 +393,9 @@ exports.forgotPassword = async (req, res) => {
     const htmlMessage = `<p>Vui lòng nhấp vào nút dưới đây để đặt lại mật khẩu (liên kết có hiệu lực trong 1 giờ):</p><a href="${resetUrl}" target="_blank">Đặt lại mật khẩu</a>`;
 
     await sendEmail(user.email, "Yêu cầu đặt lại mật khẩu", htmlMessage);
-    res
-      .status(200)
-      .json({
-        message:
-          "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
-      });
+    res.status(200).json({
+      message: "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+    });
   } catch (error) {
     res.status(500).json({ message: "Lỗi máy chủ" });
   }
