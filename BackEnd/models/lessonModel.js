@@ -7,7 +7,7 @@ const LessonSchema = new Schema(
     sectionId: { type: Schema.Types.ObjectId, ref: "Section", required: true },
     title: { type: String, required: true },
     description: String,
-    lectureNotes: String,
+    lessonNotes: String,
     videoUrl: String,
     captions: String,
     duration: Number, // Duration in seconds

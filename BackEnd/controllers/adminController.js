@@ -500,7 +500,7 @@ exports.getAllCourses = async (req, res) => {
 
     // Execute query with pagination
     const courses = await Course.find(query)
-      .populate("categoryId", "name")
+      .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type")
       .populate("sections", "name")
       .sort(sort)
@@ -883,25 +883,47 @@ exports.createCourse = async (req, res) => {
           continue;
         }
 
-        // Sử dụng URL mới nếu file đã được move
-        let finalVideoUrl = lessonData.videoUrl || "";
-        if (lessonData.videoUrl && movedFilesMap.has(lessonData.videoUrl)) {
-          finalVideoUrl = movedFilesMap.get(lessonData.videoUrl);
+        // Map lessonNotes -> lessonNotes (use lessonNotes as the field in DB)
+        // Accept both lessonNotes and lectureNotes for backward compatibility, but always use lessonNotes in DB
+        let notes = "";
+        if (lessonData.lessonNotes !== undefined) {
+          notes = lessonData.lessonNotes;
+        } else if (lessonData.lectureNotes !== undefined) {
+          notes = lessonData.lectureNotes;
         }
-
-        const newLesson = new Lesson({
-          courseId: savedCourse._id,
-          sectionId: savedSection._id,
-          title: lessonData.title,
-          description: lessonData.description || "",
-          lectureNotes: lessonData.lectureNotes || "",
-          videoUrl: finalVideoUrl, // Sử dụng URL mới
-          captions: lessonData.captions || "",
-          duration: lessonData.duration || 0,
-          order: lessonData.order || 0,
-        });
-        const savedLesson = await newLesson.save();
-        createdLessonIds.push(savedLesson._id);
+        let lesson;
+        if (lessonData._id) {
+          // Update existing lesson
+          lesson = await Lesson.findOneAndUpdate(
+            { _id: lessonData._id, sectionId: savedSection._id },
+            {
+              title: lessonData.title,
+              description: lessonData.description || "",
+              lessonNotes: notes,
+              videoUrl: lessonData.videoUrl || "",
+              captions: lessonData.captions || "",
+              duration: lessonData.duration || 0,
+              order: lessonData.order || 0,
+            },
+            { new: true, runValidators: true }
+          );
+          if (!lesson) continue;
+        } else {
+          // Create new lesson
+          lesson = new Lesson({
+            courseId: savedCourse._id,
+            sectionId: savedSection._id,
+            title: lessonData.title,
+            description: lessonData.description || "",
+            lessonNotes: notes,
+            videoUrl: lessonData.videoUrl || "",
+            captions: lessonData.captions || "",
+            duration: lessonData.duration || 0,
+            order: lessonData.order || 0,
+          });
+          await lesson.save();
+        }
+        createdLessonIds.push(lesson._id);
       }
 
       // Gán lessons vào section
@@ -946,9 +968,16 @@ exports.getCourseById = async (req, res) => {
     const { courseId } = req.params;
 
     const course = await Course.findById(courseId)
-      .populate("categoryId", "name")
+      .populate({
+        path: "sections",
+        populate: {
+          path: "lessons",
+          select:
+            "title description lessonNotes videoUrl captions duration order createdAt updatedAt",
+        },
+      })
+      .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type status")
-      .populate("sections", "name")
       .populate("studentsEnrolled", "firstName lastName email");
 
     if (!course) {
@@ -990,7 +1019,7 @@ exports.getCourseById = async (req, res) => {
 exports.updateCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
 
     // Check if course exists
     const existingCourse = await Course.findById(courseId);
@@ -1000,7 +1029,7 @@ exports.updateCourse = async (req, res) => {
         .json({ success: false, message: "Course not found" });
     }
 
-    // Gộp và validate categoryIds nếu có dữ liệu liên quan
+    // Validate and normalize categoryIds
     const validCategories = await extractValidCategoryIds(updateData);
     if (validCategories.length > 0) {
       updateData.categoryIds = validCategories;
@@ -1023,14 +1052,135 @@ exports.updateCourse = async (req, res) => {
     if (updateData.subtitleLanguage)
       updateData.subtitleLanguage = updateData.subtitleLanguage.toLowerCase();
 
+    // === Handle sections and lessons update ===
+    const Section = require("../models/sectionModel");
+    const Lesson = require("../models/lessonModel");
+    let newSectionIds = [];
+    let sectionIdMap = new Map(); // oldId -> newId
+    let lessonIdMap = new Map(); // oldId -> newId
+    const inputSections = Array.isArray(updateData.sections)
+      ? updateData.sections
+      : [];
+    // Get all current section IDs of the course
+    const currentSections = await Section.find({ courseId });
+    const currentSectionIds = currentSections.map((s) => s._id.toString());
+    // Track sections to delete
+    let keepSectionIds = [];
+    for (const sectionData of inputSections) {
+      let section;
+      if (sectionData._id) {
+        // Update existing section
+        section = await Section.findOneAndUpdate(
+          { _id: sectionData._id, courseId },
+          { name: sectionData.name, order: sectionData.order || 0 },
+          { new: true, runValidators: true }
+        );
+        if (!section) continue;
+      } else {
+        // Create new section
+        section = new Section({
+          name: sectionData.name,
+          courseId,
+          order: sectionData.order || 0,
+          lessons: [],
+        });
+        await section.save();
+      }
+      newSectionIds.push(section._id);
+      sectionIdMap.set(sectionData._id, section._id);
+      keepSectionIds.push(section._id.toString());
+      // === Handle lessons in this section ===
+      const inputLessons = Array.isArray(sectionData.lessons)
+        ? sectionData.lessons
+        : [];
+      // Get all current lesson IDs of the section
+      const currentLessons = await Lesson.find({ sectionId: section._id });
+      const currentLessonIds = currentLessons.map((l) => l._id.toString());
+      let keepLessonIds = [];
+      for (const lessonData of inputLessons) {
+        // Map lessonNotes -> lessonNotes (use lessonNotes as the field in DB)
+        // Accept both lessonNotes and lectureNotes for backward compatibility, but always use lessonNotes in DB
+        let notes = "";
+        if (lessonData.lessonNotes !== undefined) {
+          notes = lessonData.lessonNotes;
+        } else if (lessonData.lectureNotes !== undefined) {
+          notes = lessonData.lectureNotes;
+        }
+        let lesson;
+        if (lessonData._id) {
+          // Update existing lesson
+          lesson = await Lesson.findOneAndUpdate(
+            { _id: lessonData._id, sectionId: section._id },
+            {
+              title: lessonData.title,
+              description: lessonData.description || "",
+              lessonNotes: notes,
+              videoUrl: lessonData.videoUrl || "",
+              captions: lessonData.captions || "",
+              duration: lessonData.duration || 0,
+              order: lessonData.order || 0,
+            },
+            { new: true, runValidators: true }
+          );
+          if (!lesson) continue;
+        } else {
+          // Create new lesson
+          lesson = new Lesson({
+            courseId,
+            sectionId: section._id,
+            title: lessonData.title,
+            description: lessonData.description || "",
+            lessonNotes: notes,
+            videoUrl: lessonData.videoUrl || "",
+            captions: lessonData.captions || "",
+            duration: lessonData.duration || 0,
+            order: lessonData.order || 0,
+          });
+          await lesson.save();
+        }
+        keepLessonIds.push(lesson._id.toString());
+        lessonIdMap.set(lessonData._id, lesson._id);
+      }
+      // Remove lessons not in keepLessonIds
+      const lessonsToDelete = currentLessonIds.filter(
+        (id) => !keepLessonIds.includes(id)
+      );
+      if (lessonsToDelete.length > 0) {
+        await Lesson.deleteMany({ _id: { $in: lessonsToDelete } });
+      }
+      // Update section.lessons
+      section.lessons = keepLessonIds;
+      await section.save();
+    }
+    // Remove sections not in keepSectionIds
+    const sectionsToDelete = currentSectionIds.filter(
+      (id) => !keepSectionIds.includes(id)
+    );
+    if (sectionsToDelete.length > 0) {
+      // Also delete all lessons in these sections
+      await Lesson.deleteMany({ sectionId: { $in: sectionsToDelete } });
+      await Section.deleteMany({ _id: { $in: sectionsToDelete } });
+    }
+    // Update course.sections
+    updateData.sections = newSectionIds;
+    // === End handle sections/lessons ===
+
     // Update the course
     const updatedCourse = await Course.findByIdAndUpdate(courseId, updateData, {
       new: true,
       runValidators: true,
     })
+      .populate({
+        path: "sections",
+        populate: {
+          path: "lessons",
+          select:
+            "title description lessonNotes videoUrl captions duration order",
+        },
+      })
       .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type")
-      .populate("sections", "name");
+      .populate("studentsEnrolled", "firstName lastName email");
 
     res.status(200).json({
       success: true,
@@ -1171,7 +1321,7 @@ exports.getCourseSections = async (req, res) => {
       .populate({
         path: "lessons",
         select:
-          "title description lectureNotes videoUrl captions duration order",
+          "title description lessonNotes videoUrl captions duration order",
         options: { sort: { order: 1 } },
       })
       .sort({ order: 1 });
@@ -1317,7 +1467,7 @@ exports.createLesson = async (req, res) => {
     const {
       title,
       description,
-      lectureNotes,
+      lessonNotes,
       videoUrl,
       captions,
       duration,
@@ -1356,7 +1506,7 @@ exports.createLesson = async (req, res) => {
       sectionId,
       title: title.trim(),
       description: description || "",
-      lectureNotes: lectureNotes || "",
+      lessonNotes: lessonNotes || "",
       videoUrl: videoUrl || "",
       captions: captions || "",
       duration: duration || 0,
@@ -1395,7 +1545,7 @@ exports.updateLesson = async (req, res) => {
     const {
       title,
       description,
-      lectureNotes,
+      lessonNotes,
       videoUrl,
       captions,
       duration,
@@ -1424,7 +1574,7 @@ exports.updateLesson = async (req, res) => {
     const updateData = {};
     if (title !== undefined) updateData.title = title.trim();
     if (description !== undefined) updateData.description = description;
-    if (lectureNotes !== undefined) updateData.lectureNotes = lectureNotes;
+    if (lessonNotes !== undefined) updateData.lessonNotes = lessonNotes;
     if (videoUrl !== undefined) updateData.videoUrl = videoUrl;
     if (captions !== undefined) updateData.captions = captions;
     if (duration !== undefined) updateData.duration = duration;
