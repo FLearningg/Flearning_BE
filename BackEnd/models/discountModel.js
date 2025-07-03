@@ -9,7 +9,7 @@ const DiscountSchema = new Schema(
       type: String,
       enum: ["general", "seasonal", "welcome", "special"],
     },
-    typee: { type: String, enum: ["percent", "fixedAmount"] },
+    type: { type: String, enum: ["percent", "fixedAmount"] },
     value: Number,
     usage: { type: Number, default: 0 },
     usageLimit: Number,

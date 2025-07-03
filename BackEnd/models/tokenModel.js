@@ -9,7 +9,11 @@ const tokenSchema = new Schema({
         unique: true,
     },
     token: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now, expires: 3600 }, 
+    createdAt: { type: Date, default: Date.now, expires: 3600 },     
+},
+{
+    timestamps: true,
+    collection: "tokens",
 });
 
 module.exports = mongoose.model("Token", tokenSchema);

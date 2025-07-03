@@ -7,6 +7,12 @@ const FeedbackSchema = new Schema(
       type: String,
       required: true,
     },
+    rateStar: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: 5,
+    },
     courseId: {
       type: Schema.Types.ObjectId,
       ref: "Course",
