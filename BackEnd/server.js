@@ -14,6 +14,7 @@ const profileRoutes = require("./routes/profileRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
+const courseDetailsRoutes = require("./routes/courseDetailsRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cartRoutes = require("./routes/cartRoutes");
@@ -100,6 +101,8 @@ app.use("/api/admin", adminRoutes);
 
 // Course routes
 app.use("/api/courses", courseRoutes);
+// Course routes
+app.use("/api/courses", courseDetailsRoutes);
 // Category routes
 app.use("/api/categories", categoryRoutes);
 // Notification routes
