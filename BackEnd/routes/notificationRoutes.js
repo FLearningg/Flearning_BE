@@ -1,8 +1,9 @@
-const notificationController = require('../controllers/notificationController');
-const authorize = require('../middlewares/authMiddleware');
+const notificationController = require("../controllers/notificationController");
 
-const router = require('express').Router();
+const router = require("express").Router();
 
-router.get('/:userId', authorize('student'), notificationController.getNotifications);
+router.get("/:userId", notificationController.getNotifications);
+
+router.put("/:userId", notificationController.updateAllStatusNotification);
 
 module.exports = router;
