@@ -21,6 +21,7 @@ const wishlistRoutes = require("./routes/wishlistRoutes");
 const discountRoutes = require("./routes/discountRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const conversationRoutes = require("./routes/conversationRoutes");
+const chatbotRoutes = require("./routes/chatbotRoutes");
 
 const app = express();
 
@@ -120,6 +121,8 @@ app.use("/api/conversations", conversationRoutes);
 app.use("/api/admin/discounts", discountRoutes);
 // Profile routes
 app.use("/api/profile", profileRoutes);
+// Chatbot routes
+app.use("/api/chatbot", chatbotRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 
