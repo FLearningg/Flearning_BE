@@ -7,10 +7,11 @@ const Discount = require("../models/discountModel");
 const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 
-//nom :  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4NjRmM2QxYjU3MWFiY2VkZTkxYzE0MiIsInJvbGUiOiJzdHVkZW50IiwiaWF0IjoxNzUxNTYwNDM5LCJleHAiOjE3NTE1NjEzMzl9.M5etGMLUFuxEcqckKvNorFWFGnimxobgakVD9pqXTKs
-//mon : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4NjRmNDI1YjU3MWFiY2VkZTkxYzE0NyIsInJvbGUiOiJzdHVkZW50IiwiaWF0IjoxNzUxNTYwNDY4LCJleHAiOjE3NTE1NjEzNjh9.mZmw6LITe1SuHKiWT65xp5xOI-OOw58Meo9GUJJZEAk
-
-//Get course details
+/**
+ * @desc    Get details for a specific course
+ * @route   GET /api/courses/:courseId
+ * @access  Public
+ */
 exports.getCourseDetails = async (req, res) => {
   try {
     const course = await Course.findById(req.params.courseId)
@@ -28,7 +29,11 @@ exports.getCourseDetails = async (req, res) => {
   }
 };
 
-//Get related courses
+/**
+ * @desc    Get courses related to a specific course
+ * @route   GET /api/courses/:courseId/related
+ * @access  Public
+ */
 exports.getRelatedCourses = async (req, res) => {
   try {
     const currentCourse = await Course.findById(req.params.courseId);
@@ -46,8 +51,11 @@ exports.getRelatedCourses = async (req, res) => {
   }
 };
 
-//Get all lessons in a course
-//Get lesson details (user must be enrolled)
+/**
+ * @desc    Get details of a specific lesson (user must be enrolled)
+ * @route   GET /api/courses/:courseId/lessons/:lessonId
+ * @access  Private
+ */
 exports.getLessonDetails = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -78,7 +86,11 @@ exports.getLessonDetails = async (req, res) => {
   }
 };
 
-//Get lesson comments ( user must be enrolled in the course)
+/**
+ * @desc    Get all comments for a specific lesson (user must be enrolled)
+ * @route   GET /api/courses/:courseId/lessons/:lessonId/comments
+ * @access  Private
+ */
 exports.getLessonComments = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -108,7 +120,11 @@ exports.getLessonComments = async (req, res) => {
   }
 };
 
-//Post comment to lesson (user must be enrolled in the course)
+/**
+ * @desc    Add a new comment to a lesson (user must be enrolled)
+ * @route   POST /api/courses/:courseId/lessons/:lessonId/comments
+ * @access  Private
+ */
 exports.CommentToLesson = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -155,7 +171,11 @@ exports.CommentToLesson = async (req, res) => {
   }
 };
 
-//Delete comment (check xem thử đã đúng user đã post comment hay chưa)
+/**
+ * @desc    Delete a specific comment from a lesson (user must be the owner or admin)
+ * @route   DELETE /api/courses/:courseId/lessons/:lessonId/comments/:commentId
+ * @access  Private
+ */
 exports.deleteLessonComment = async (req, res) => {
   const userId = req.user.id;
 
