@@ -15,7 +15,15 @@ const mongoose = require("mongoose");
 exports.getCourseDetails = async (req, res) => {
   try {
     const course = await Course.findById(req.params.courseId)
-      .populate("sections")
+      .populate({
+        path: "sections",
+        populate: {
+          path: "lessons",
+          model: "Lesson", // tên model chính xác
+          options: { sort: { order: 1 } }, // nếu muốn lessons sắp theo thứ tự
+        },
+        options: { sort: { order: 1 } }, // nếu muốn sections sắp theo thứ tự
+      })
       .populate("categoryIds")
       .populate("discountId");
 

@@ -18,28 +18,24 @@ router.get("/top-selling", courseController.getTopCourses);
 router.get("/recently-added", courseController.getNewCourses);
 
 // Course details
-detailsRouter.get("/:courseId", getCourseDetails);
-detailsRouter.get("/:courseId/related", getRelatedCourses);
+router.get("/:courseId", getCourseDetails);
+router.get("/:courseId/related", getRelatedCourses);
 
 // Lesson details
-detailsRouter.get(
-  "/:courseId/lessons/:lessonId",
-  authMiddleware(),
-  getLessonDetails
-);
+router.get("/:courseId/lessons/:lessonId", authMiddleware(), getLessonDetails);
 
 // Lesson comments
-detailsRouter.get(
+router.get(
   "/:courseId/lessons/:lessonId/comments",
   authMiddleware(),
   getLessonComments
 );
-detailsRouter.post(
+router.post(
   "/:courseId/lessons/:lessonId/comments",
   authMiddleware(),
   CommentToLesson
 );
-detailsRouter.delete(
+router.delete(
   "/:courseId/lessons/:lessonId/comments/:commentId",
   authMiddleware(),
   deleteLessonComment
