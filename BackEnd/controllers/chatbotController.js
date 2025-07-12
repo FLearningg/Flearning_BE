@@ -10,7 +10,7 @@ const Transaction = require("../models/transactionModel");
 
 // Khởi tạo Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 // --- CẬP NHẬT SONG NGỮ ---
 // Mô tả Schema cho Gemini hiểu (Mô tả song ngữ)
@@ -126,17 +126,21 @@ exports.handleQuery = async (req, res) => {
             }
             
             // --- Step 4: Ask Gemini to summarize the data into a friendly response ---
-            // --- CẬP NHẬT SONG NGỮ ---
-            const promptForSummary = `
+            const clientUrl = process.env.CLIENT_URL;
+const promptForSummary = `
                 Based on the user's original question and the data I retrieved, please formulate a friendly and natural-sounding response.
                 **IMPORTANT: Respond in the same language as the "Original Question" (Vietnamese or English).**
+
+                **CRITICAL RULE: If your response includes the title of a course from the data, you MUST format it as a Markdown hyperlink.**
+                The link format is: \`[Course Title](${clientUrl}/course/COURSE_ID)\`.
+                Example: If a course is \`{ "title": "Learn React", "_id": "665811a18faddc92a1c652d5" }\`, you must write it as \`[Learn React](${clientUrl}/course/665811a18faddc92a1c652d5)\`.
 
                 Original Question: "${userPrompt}"
 
                 Retrieved Data (JSON):
                 ${JSON.stringify(dbResults, null, 2)}
 
-                Your Response (in the original language):
+                Your Response (in the original language, with Markdown links for courses):
             `;
 
             const summaryResult = await model.generateContent(promptForSummary);

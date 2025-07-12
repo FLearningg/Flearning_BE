@@ -1851,7 +1851,6 @@ exports.getDashboardStats = async (req, res) => {
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Sử dụng Promise.all để thực hiện các truy vấn song song, tăng hiệu suất
     const [
       totalUsers,
       totalCourses,
@@ -1860,49 +1859,64 @@ exports.getDashboardStats = async (req, res) => {
       monthlySales,
       newUsersThisMonth,
       latestTransactions,
+      courseRatingData, 
     ] = await Promise.all([
-      // 1. Đếm tổng số người dùng
       User.countDocuments(),
-
-      // 2. Đếm tổng số khóa học
       Course.countDocuments(),
-
-      // 3. Đếm tổng số lượt đăng ký
       Enrollment.countDocuments(),
-
-      // 4. Tính tổng doanh thu từ các giao dịch đã hoàn thành
       Transaction.aggregate([
         { $match: { status: "completed" } },
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
-
-      // 5. Thống kê doanh thu theo từng tháng trong năm nay
       Transaction.aggregate([
-        {
-          $match: {
-            status: "completed",
-            createdAt: { $gte: new Date(today.getFullYear(), 0, 1) },
-          },
-        },
-        {
-          $group: {
-            _id: { month: { $month: "$createdAt" } },
-            total: { $sum: "$amount" },
-          },
-        },
+        { $match: { status: "completed", createdAt: { $gte: new Date(today.getFullYear(), 0, 1) } } },
+        { $group: { _id: { month: { $month: "$createdAt" } }, total: { $sum: "$amount" } } },
         { $sort: { "_id.month": 1 } },
       ]),
-
-      // 6. Đếm số lượng người dùng mới trong tháng này
       User.countDocuments({ createdAt: { $gte: firstDayOfMonth } }),
+      Transaction.find({ status: "completed" }).sort({ createdAt: -1 }).limit(5),
 
-      // 7. Lấy 5 giao dịch gần nhất
-      Transaction.find({ status: "completed" })
-        .sort({ createdAt: -1 })
-        .limit(5),
+      Course.aggregate([
+        { $match: { rating: { $exists: true, $ne: null } } },
+        {
+          $facet: {
+            // Nhánh 1: Tính rating trung bình và tổng số khóa học có rating
+            "overallStats": [
+              { $group: { _id: null, averageRating: { $avg: "$rating" }, totalCoursesWithRating: { $sum: 1 } } }
+            ],
+            // Nhánh 2: Đếm số lượng khóa học cho mỗi mức sao
+            "ratingBreakdown": [
+              { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } }, // Làm tròn rating để gom nhóm (ví dụ 4.5 -> 5)
+              { $sort: { _id: -1 } } // Sắp xếp từ 5 sao xuống 1 sao
+            ]
+          }
+        }
+      ]),
     ]);
 
-    // Định dạng lại dữ liệu doanh thu theo tháng để dễ dùng ở frontend
+    // Xử lý dữ liệu rating để tính phần trăm
+    let courseRating = {
+      averageRating: 0,
+      breakdown: []
+    };
+    if (courseRatingData.length > 0 && courseRatingData[0].overallStats.length > 0) {
+      const stats = courseRatingData[0].overallStats[0];
+      const breakdownData = courseRatingData[0].ratingBreakdown;
+      const totalRatedCourses = stats.totalCoursesWithRating;
+
+      courseRating.averageRating = stats.averageRating;
+      
+      const breakdownMap = new Map(breakdownData.map(item => [item._id, item.count]));
+      courseRating.breakdown = [5, 4, 3, 2, 1].map(star => {
+          const count = breakdownMap.get(star) || 0;
+          return {
+              stars: star,
+              count: count,
+              percentage: totalRatedCourses > 0 ? Math.round((count / totalRatedCourses) * 100) : 0,
+          };
+      });
+    }
+
     const formattedMonthlySales = Array.from({ length: 12 }, (_, i) => {
       const monthData = monthlySales.find((m) => m._id.month === i + 1);
       return {
@@ -1911,7 +1925,6 @@ exports.getDashboardStats = async (req, res) => {
       };
     });
 
-    // Trả về kết quả
     res.status(200).json({
       totalUsers,
       totalCourses,
@@ -1920,6 +1933,7 @@ exports.getDashboardStats = async (req, res) => {
       newUsersThisMonth,
       monthlySales: formattedMonthlySales,
       latestTransactions,
+      courseRating, 
     });
   } catch (error) {
     console.error("Lỗi khi lấy dữ liệu thống kê:", error);
