@@ -1,5 +1,6 @@
 const courseController = require("../controllers/courseController");
 const authMiddleware = require("../middlewares/authMiddleware");
+const authorize = require("../middlewares/authMiddleware");
 
 const router = require("express").Router();
 const detailsRouter = require("express").Router();
@@ -16,6 +17,11 @@ router.get("/", courseController.getAllCourses);
 router.get("/search", courseController.searchCourses);
 router.get("/top-selling", courseController.getTopCourses);
 router.get("/recently-added", courseController.getNewCourses);
+router.post(
+  "/enroll-course",
+  authorize("student"),
+  courseController.enrollCourse
+);
 
 // Course details
 router.get("/:courseId", getCourseDetails);
