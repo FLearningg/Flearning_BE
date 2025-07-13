@@ -114,25 +114,25 @@ const courseController = {
    */
   enrollCourse: async (req, res) => {
     try {
-      const { userId, courseId } = req.body;
-      if (!userId || !courseId) {
-        return res.status(400).json({ message: "Missing userId or courseId" });
+      const { userId, courseIds } = req.body;
+      if (!userId || !Array.isArray(courseIds) || courseIds.length === 0) {
+        return res.status(400).json({ message: "Missing userId or courseIds" });
       }
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      // Kiểm tra nếu đã enroll thì không thêm nữa
-      if (user.enrolledCourses.includes(courseId)) {
-        return res.status(400).json({ message: "Course already enrolled" });
-      }
-      user.enrolledCourses.push(courseId);
+      // Thêm các courseId chưa có vào mảng
+      const newCourses = courseIds.filter(
+        (id) => !user.enrolledCourses.includes(id)
+      );
+      user.enrolledCourses.push(...newCourses);
       await user.save();
-      res
-        .status(200)
-        .json({
-          message: "Course enrolled successfully",
-        });
+      res.status(200).json({
+        message: "Courses enrolled successfully",
+        enrolledCourses: user.enrolledCourses,
+        addedCourses: newCourses,
+      });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
