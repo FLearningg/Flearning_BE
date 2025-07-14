@@ -1,10 +1,12 @@
 const User = require("../models/userModel");
-const Enrollment = require("../models/enrollmentModel");
 const Course = require("../models/courseModel");
 const Payment = require("../models/paymentModel");
 const Transaction = require("../models/transactionModel");
 const mongoose = require("mongoose");
-const { uploadUserAvatar, deleteFromFirebase } = require("../utils/firebaseStorage");
+const {
+  uploadUserAvatar,
+  deleteFromFirebase,
+} = require("../utils/firebaseStorage");
 const fs = require("fs");
 
 /**
@@ -107,7 +109,7 @@ const updateProfile = async (req, res) => {
     if (req.file) {
       try {
         uploadedFilePath = req.file.path;
-        
+
         // Verify file exists before upload
         if (!fs.existsSync(uploadedFilePath)) {
           throw new Error("Upload file not found");
@@ -121,14 +123,16 @@ const updateProfile = async (req, res) => {
           userId,
           currentUser.userName
         );
-        
+
         // Delete old image if it exists
         if (currentUser.userImage) {
           try {
             // Extract file path from the old image URL
-            const oldImagePath = extractSourceDestination(currentUser.userImage);
+            const oldImagePath = extractSourceDestination(
+              currentUser.userImage
+            );
             if (oldImagePath) {
-              await deleteFromFirebase(oldImagePath).catch(err => {
+              await deleteFromFirebase(oldImagePath).catch((err) => {
                 console.warn("Failed to delete old image:", err.message);
               });
             }
@@ -136,7 +140,7 @@ const updateProfile = async (req, res) => {
             console.warn("Error deleting old image:", deleteError.message);
           }
         }
-        
+
         updateData.userImage = uploadResult.url;
       } catch (uploadError) {
         console.error("Upload error details:", uploadError);
@@ -152,7 +156,10 @@ const updateProfile = async (req, res) => {
             fs.unlinkSync(uploadedFilePath);
           }
         } catch (cleanupError) {
-          console.warn("Failed to cleanup temporary file:", cleanupError.message);
+          console.warn(
+            "Failed to cleanup temporary file:",
+            cleanupError.message
+          );
         }
       }
     }
@@ -242,25 +249,19 @@ const getEnrolledCourses = async (req, res) => {
   try {
     const userId = req.user.id; // From auth middleware (string)
 
-    // Find all enrollments for this user and populate course details
-    // Convert string userId to ObjectId for proper MongoDB query
-    const enrollments = await Enrollment.find({
-      userId: new mongoose.Types.ObjectId(userId),
-    })
-      .populate({
-        path: "courseId",
-        model: "Course",
-        populate: {
-          path: "categoryIds",
-          model: "Category",
-          select: "name",
-        },
-        select:
-          "title subTitle thumbnail price rating level duration language categoryIds createdAt",
-      })
-      .sort({ createdAt: -1 }); // Sort by enrollment date (newest first)
+    // Find user and populate enrolledCourses
+    const user = await User.findById(userId).populate({
+      path: "enrolledCourses",
+      populate: {
+        path: "categoryIds",
+        model: "Category",
+        select: "name",
+      },
+      select:
+        "title subTitle thumbnail price rating level duration language categoryIds createdAt instructor",
+    });
 
-    if (!enrollments || enrollments.length === 0) {
+    if (!user || !user.enrolledCourses || user.enrolledCourses.length === 0) {
       return res.status(200).json({
         success: true,
         message: "No enrolled courses found",
@@ -269,38 +270,24 @@ const getEnrolledCourses = async (req, res) => {
       });
     }
 
-    // Filter out enrollments where courseId is null or undefined (course might have been deleted)
-    const validEnrollments = enrollments.filter(
-      (enrollment) => enrollment.courseId && enrollment.courseId._id
-    );
-
-    if (validEnrollments.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No valid enrolled courses found",
-        data: [],
-        count: 0,
-      });
-    }
-
-    // Extract course information from valid enrollments
-    const enrolledCourses = validEnrollments.map((enrollment) => ({
-      enrollmentId: enrollment._id,
-      enrollmentDate: enrollment.createdAt,
+    // Extract course information from enrolledCourses
+    const enrolledCourses = user.enrolledCourses.map((course) => ({
       course: {
-        id: enrollment.courseId._id,
-        title: enrollment.courseId.title,
-        subTitle: enrollment.courseId.subTitle,
-        thumbnail: enrollment.courseId.thumbnail,
-        price: enrollment.courseId.price,
-        rating: enrollment.courseId.rating,
-        level: enrollment.courseId.level,
-        duration: enrollment.courseId.duration,
-        language: enrollment.courseId.language,
-        category: enrollment.courseId.categoryIds && enrollment.courseId.categoryIds.length > 0
-          ? enrollment.courseId.categoryIds[0].name
-          : null,
-        createdAt: enrollment.courseId.createdAt,
+        id: course._id,
+        title: course.title,
+        subTitle: course.subTitle,
+        thumbnail: course.thumbnail,
+        price: course.price,
+        rating: course.rating,
+        level: course.level,
+        duration: course.duration,
+        language: course.language,
+        instructor: course.instructor || null, // fallback if not present
+        category:
+          course.categoryIds && course.categoryIds.length > 0
+            ? course.categoryIds[0].name
+            : null,
+        createdAt: course.createdAt,
       },
     }));
 
@@ -321,7 +308,7 @@ const getEnrolledCourses = async (req, res) => {
 };
 
 /**
- * @desc    Get purchase history for user
+ * @desc    Get purchase history for user (enriched with payment and course info)
  * @route   GET /api/profile/purchase-history
  * @access  Private
  */
@@ -329,96 +316,85 @@ const getPurchaseHistory = async (req, res) => {
   try {
     const userId = req.user.id; // From auth middleware (string)
     const { page = 1, limit = 10 } = req.query;
-
     const skip = (page - 1) * limit;
 
-    // Find all payments for this user and populate related data
-    const payments = await Payment.find({
+    // Get transactions for this user
+    const transactions = await Transaction.find({
       userId: new mongoose.Types.ObjectId(userId),
     })
-      .populate({
-        path: "courseId",
-        model: "Course",
-        select: "title subTitle thumbnail price categoryIds",
-        populate: {
-          path: "categoryIds",
-          model: "Category",
-          select: "name",
-        },
-      })
-      .populate({
-        path: "transactionId",
-        model: "Transaction",
-        select: "gatewayTransactionId type status description",
-      })
-      .sort({ paymentDate: -1 }) // Sort by payment date (newest first)
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Get total count for pagination
-    const totalPayments = await Payment.countDocuments({
+    const totalTransactions = await Transaction.countDocuments({
       userId: new mongoose.Types.ObjectId(userId),
     });
+    const totalPages = Math.ceil(totalTransactions / limit);
 
-    if (!payments || payments.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No purchase history found",
-        data: [],
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: 0,
-          totalPayments: 0,
-          hasNext: false,
-          hasPrev: false,
-        },
-      });
-    }
-
-    // Format purchase history data
-    const purchaseHistory = payments.map((payment) => ({
-      paymentId: payment._id,
-      enrollmentId: payment.enrollmentId,
-      amount: parseFloat(payment.amount.toString()),
-      paymentDate: payment.paymentDate,
-      paymentMethod: payment.paymentMethod,
-      status: payment.status,
-      createdAt: payment.createdAt,
-      course: payment.courseId
-        ? {
-            id: payment.courseId._id,
-            title: payment.courseId.title,
-            subTitle: payment.courseId.subTitle,
-            thumbnail: payment.courseId.thumbnail,
-            price: payment.courseId.price,
-            category: payment.courseId.categoryIds && payment.courseId.categoryIds.length > 0
-              ? payment.courseId.categoryIds[0].name
-              : null,
+    // For each transaction, fetch payment and course info
+    const data = await Promise.all(
+      transactions.map(async (tran) => {
+        // Find related payment (if any)
+        const payment = await Payment.findOne({ transactionId: tran._id });
+        // Find related course (first courseId in array)
+        let course = null;
+        let categoryName = null;
+        if (tran.courseId && tran.courseId.length > 0) {
+          course = await Course.findById(tran.courseId[0]).populate({
+            path: "categoryIds",
+            select: "name",
+          });
+          if (course && course.categoryIds && course.categoryIds.length > 0) {
+            categoryName = course.categoryIds[0].name;
           }
-        : null,
-      transaction: payment.transactionId
-        ? {
-            id: payment.transactionId._id,
-            gatewayTransactionId: payment.transactionId.gatewayTransactionId,
-            type: payment.transactionId.type,
-            status: payment.transactionId.status,
-            description: payment.transactionId.description,
-          }
-        : null,
-    }));
-
-    const totalPages = Math.ceil(totalPayments / limit);
+        }
+        return {
+          paymentId: tran._id,
+          amount: parseFloat(tran.amount),
+          currency: tran.currency,
+          status: tran.status,
+          type: tran.type,
+          description: tran.description,
+          gatewayTransactionId: tran.gatewayTransactionId,
+          createdAt: tran.createdAt,
+          updatedAt: tran.updatedAt,
+          paymentMethod: payment ? payment.paymentMethod : null,
+          paymentDate: payment ? payment.paymentDate : tran.createdAt,
+          course: course
+            ? {
+                id: course._id,
+                title: course.title,
+                subTitle: course.subTitle,
+                thumbnail: course.thumbnail,
+                price: course.price,
+                rating: course.rating,
+                level: course.level,
+                duration: course.duration,
+                language: course.language,
+                category: categoryName,
+                createdAt: course.createdAt,
+              }
+            : null,
+          transaction: {
+            gatewayTransactionId: tran.gatewayTransactionId,
+            status: tran.status,
+            type: tran.type,
+          },
+        };
+      })
+    );
 
     res.status(200).json({
       success: true,
       message: "Purchase history retrieved successfully",
-      data: purchaseHistory,
+      data,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
-        totalPayments,
+        totalTransactions,
         hasNext: page < totalPages,
         hasPrev: page > 1,
+        totalPayments: totalTransactions,
       },
     });
   } catch (error) {

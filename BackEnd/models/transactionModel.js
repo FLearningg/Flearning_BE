@@ -2,12 +2,6 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
-    paymentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Payment",
-      required: true,
-      unique: true,
-    },
     gatewayTransactionId: {
       type: String,
       unique: true,
@@ -32,6 +26,18 @@ const transactionSchema = new mongoose.Schema(
     description: {
       type: String,
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    courseId: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Course",
+        required: true,
+      }
+    ],
   },
   { timestamps: true, collection: "transactions" }
 );

@@ -1,7 +1,6 @@
 const Feedback = require("../models/feedbackModel");
 const Course = require("../models/courseModel");
 const User = require("../models/userModel");
-const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 
 /**
@@ -102,13 +101,9 @@ exports.createCourseFeedback = async (req, res) => {
       return res.status(404).json({ message: "Course not found." });
     }
 
-    // Check if user is enrolled in the course using enrollments collection
-    const enrollment = await Enrollment.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
-      courseId: new mongoose.Types.ObjectId(courseId),
-    });
-
-    if (!enrollment) {
+    // Check if user is enrolled in the course using User.enrolledCourses
+    const user = await User.findById(userId).select("enrolledCourses");
+    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
       return res.status(403).json({
         message: "You must be enrolled in this course to give feedback.",
       });
@@ -178,6 +173,14 @@ exports.updateCourseFeedback = async (req, res) => {
       return res.status(400).json({ message: "Invalid course ID." });
     }
 
+    // Check if user is enrolled in the course using User.enrolledCourses
+    const user = await User.findById(userId).select("enrolledCourses");
+    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+      return res.status(403).json({
+        message: "You must be enrolled in this course to update feedback.",
+      });
+    }
+
     // Find the feedback
     const feedback = await Feedback.findOne({
       courseId: courseId,
@@ -228,6 +231,14 @@ exports.deleteCourseFeedback = async (req, res) => {
     // Validate feedbackId format
     if (!mongoose.Types.ObjectId.isValid(feedbackId)) {
       return res.status(400).json({ message: "Invalid feedback ID." });
+    }
+
+    // Check if user is enrolled in the course using User.enrolledCourses
+    const user = await User.findById(userId).select("enrolledCourses");
+    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+      return res.status(403).json({
+        message: "You must be enrolled in this course to delete feedback.",
+      });
     }
 
     // Find the feedback
