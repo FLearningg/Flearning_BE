@@ -35,20 +35,58 @@ console.log("✅ [SERVER] HTTP server created");
 
 // Initialize Socket.IO with CORS configuration
 console.log("🔌 [SERVER] Initializing Socket.IO...");
+
+// Get allowed origins from environment or use defaults
+const getAllowedOrigins = () => {
+  const origins = [];
+
+  // Primary client URL
+  if (process.env.CLIENT_URL) {
+    origins.push(process.env.CLIENT_URL);
+  }
+
+  // Azure URLs (add your Azure domain here)
+  if (process.env.AZURE_CLIENT_URL) {
+    origins.push(process.env.AZURE_CLIENT_URL);
+  }
+
+  // Development URLs
+  if (process.env.NODE_ENV === "development") {
+    origins.push("http://localhost:3000", "http://127.0.0.1:3000");
+  }
+
+  // Default fallback
+  if (origins.length === 0) {
+    origins.push("http://localhost:3000");
+  }
+
+  console.log("🌐 [SOCKET] Allowed CORS origins:", origins);
+  return origins;
+};
+
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
-    methods: ["GET", "POST"],
+    origin: getAllowedOrigins(),
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   },
+  // Prioritize polling for Azure - more reliable
   transports: ["polling", "websocket"],
+  // Azure-specific optimizations
   allowEIO3: true,
-  pingTimeout: 30000,
-  pingInterval: 10000,
+  pingTimeout: 60000, // Increased for Azure
+  pingInterval: 25000, // Increased for Azure
   maxHttpBufferSize: 1e6,
   compression: true,
   httpCompression: true,
   cookie: false,
+  // Enable sticky sessions for Azure
+  serveClient: false,
+  // Azure connection handling
+  upgradeTimeout: 30000,
+  // Force polling on Azure if needed
+  forceNew: true,
 });
 console.log("✅ [SERVER] Socket.IO initialized with CORS");
 
@@ -62,8 +100,10 @@ require("./socket/chatSocket")(io);
 
 app.use(
   cors({
-    origin: process.env.CLIENT_URL,
+    origin: getAllowedOrigins(),
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 app.use(express.json());
