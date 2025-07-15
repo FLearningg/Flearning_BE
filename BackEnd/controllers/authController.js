@@ -400,3 +400,95 @@ exports.forgotPassword = async (req, res) => {
     res.status(500).json({ message: "Lỗi máy chủ" });
   }
 };
+
+/**
+ * @desc    [MOBILE] Gửi mã đặt lại mật khẩu qua email
+ * @route   POST /api/auth/mobile/send-reset-code
+ * @access  Public
+ */
+exports.sendMobileResetCode = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: "Vui lòng cung cấp email." });
+        }
+
+        const user = await User.findOne({ email });
+
+        // Để tránh lộ thông tin, luôn trả về thông báo thành công
+        if (!user) {
+            return res.status(200).json({
+                message: "Nếu email tồn tại trong hệ thống, mã khôi phục đã được gửi.",
+            });
+        }
+
+        // 1. Tạo mã ngẫu nhiên 4 chữ số
+        const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
+
+        // 2. Hash mã này để lưu vào DB an toàn
+        user.mobileResetCodeHash = await bcrypt.hash(resetCode, 10);
+
+        // 3. Đặt thời gian hết hạn (10 phút)
+        user.mobileResetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 phút
+
+        await user.save();
+
+        // 4. Gửi mã (chưa hash) đến email
+        const htmlMessage = `<p>Mã đặt lại mật khẩu cho ứng dụng di động của bạn là:</p>
+                             <h2 style="text-align:center;letter-spacing:3px;">${resetCode}</h2>
+                             <p>Mã này có hiệu lực trong 10 phút.</p>`;
+        
+        await sendEmail(user.email, "Mã Đặt Lại Mật Khẩu Ứng Dụng", htmlMessage);
+        
+        res.status(200).json({
+            message: "Mã khôi phục đã được gửi đến email của bạn.",
+        });
+
+    } catch (error) {
+        console.error("Lỗi khi gửi mã reset cho mobile:", error);
+        res.status(500).json({ message: "Lỗi máy chủ" });
+    }
+};
+
+/**
+ * @desc    [MOBILE] Xác thực mã và đặt lại mật khẩu mới
+ * @route   POST /api/auth/mobile/reset-with-code
+ * @access  Public
+ */
+exports.resetPasswordWithCode = async (req, res) => {
+    try {
+        const { email, code, newPassword } = req.body;
+        if (!email || !code || !newPassword) {
+            return res.status(400).json({ message: "Vui lòng cung cấp email, code, và mật khẩu mới." });
+        }
+
+        // Tìm user VÀ kiểm tra mã chưa hết hạn
+        const user = await User.findOne({
+            email,
+            mobileResetCodeExpires: { $gt: Date.now() },
+        }).select('+mobileResetCodeHash'); // Phải dùng select() để lấy trường ẩn
+
+        if (!user) {
+            return res.status(400).json({ message: "Mã không hợp lệ hoặc đã hết hạn." });
+        }
+
+        // So sánh mã người dùng nhập với mã trong DB
+        const isMatch = await bcrypt.compare(code, user.mobileResetCodeHash);
+        if (!isMatch) {
+            return res.status(400).json({ message: "Mã không hợp lệ." });
+        }
+
+        // Nếu hợp lệ, cập nhật mật khẩu và xóa mã
+        user.password = newPassword; // .pre('save') sẽ tự động hash
+        user.mobileResetCodeHash = undefined;
+        user.mobileResetCodeExpires = undefined;
+        
+        await user.save();
+
+        res.status(200).json({ message: "Mật khẩu đã được đặt lại thành công." });
+
+    } catch (error) {
+        console.error("Lỗi khi reset mật khẩu bằng code:", error);
+        res.status(500).json({ message: "Lỗi máy chủ" });
+    }
+};

@@ -21,6 +21,14 @@ const UserSchema = new Schema(
     },
     enrolledCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
     userImage: String,
+    mobileResetCodeHash: {
+        type: String,
+        select: false, 
+    },
+    mobileResetCodeExpires: {
+        type: Date,
+        select: false,
+    },
   },
   { timestamps: true, collection: "users" }
 );
