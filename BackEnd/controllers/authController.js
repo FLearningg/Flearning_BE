@@ -8,7 +8,7 @@ const { OAuth2Client } = require("google-auth-library");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Hàm nội bộ để tạo token
+// Internal function to generate tokens
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
     { id: user._id, role: user.role },
@@ -34,12 +34,12 @@ exports.register = async (req, res) => {
     if (!firstName || !lastName || !email || !password) {
       return res
         .status(400)
-        .json({ message: "Vui lòng cung cấp đầy đủ thông tin." });
+        .json({ message: "Please provide all required fields." });
     }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ message: "Email đã tồn tại." });
+      return res.status(400).json({ message: "Email already exists." });
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
@@ -55,16 +55,16 @@ exports.register = async (req, res) => {
     const verificationToken = crypto.randomBytes(32).toString("hex");
     await new Token({ userId: newUser._id, token: verificationToken }).save();
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
-    const htmlMessage = `<p>Vui lòng nhấp vào nút dưới đây để xác thực email của bạn:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
-    await sendEmail(newUser.email, "Xác thực Email", htmlMessage);
+    const htmlMessage = `<p>Please click the button below to verify your email:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
+    await sendEmail(newUser.email, "Email Verification", htmlMessage);
 
     res.status(201).json({
       message:
-        "Đăng ký thành công. Vui lòng kiểm tra email để xác thực tài khoản.",
+        "Registration successful. Please check your email to verify your account.",
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Lỗi máy chủ", error: error.message });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -75,47 +75,41 @@ exports.register = async (req, res) => {
  */
 exports.verifyEmail = async (req, res) => {
   try {
-    // LOG 1: Xem backend nhận được token gì từ URL
     const receivedToken = req.params.token;
-    console.log("Backend đã nhận được token từ URL:", receivedToken);
+    console.log("Backend received token from URL:", receivedToken);
 
-    // LOG 2: Tìm kiếm token này trong database
     const tokenDocument = await Token.findOne({ token: receivedToken });
-
-    // LOG 3: In kết quả tìm kiếm ra
-    // Nếu kết quả là 'null', nghĩa là không tìm thấy.
     console.log(
-      "Kết quả tìm kiếm token trong DB (Token.findOne):",
+      "Token search result in DB (Token.findOne):",
       tokenDocument
     );
 
     if (!tokenDocument) {
-      // Thêm ghi chú vào response để dễ debug hơn
       return res
         .status(400)
         .send(
-          "Liên kết không hợp lệ hoặc đã hết hạn (không tìm thấy token trong DB)."
+          "Invalid or expired link (token not found in DB)."
         );
     }
 
     const user = await User.findById(tokenDocument.userId);
     if (!user) {
-      return res.status(400).send("Không tìm thấy người dùng.");
+      return res.status(400).send("User not found.");
     }
 
     if (user.status === "verified") {
       await tokenDocument.deleteOne();
-      return res.status(200).send("Tài khoản này đã được xác thực trước đó.");
+      return res.status(200).send("This account has already been verified.");
     }
 
     user.status = "verified";
     await user.save();
     await tokenDocument.deleteOne();
 
-    res.status(200).send("Email đã được xác thực thành công.");
+    res.status(200).send("Email verified successfully.");
   } catch (error) {
-    console.error("Đã có lỗi trong hàm verifyEmail:", error);
-    res.status(500).json({ message: "Lỗi máy chủ", error: error.message });
+    console.error("Error in verifyEmail function:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -136,7 +130,7 @@ exports.googleLogin = async (req, res) => {
     if (!email_verified) {
       return res
         .status(400)
-        .json({ message: "Email Google chưa được xác thực." });
+        .json({ message: "Google email is not verified." });
     }
 
     let user = await User.findOne({ email });
@@ -145,7 +139,7 @@ exports.googleLogin = async (req, res) => {
       if (user.status === "banned") {
         return res.status(403).json({
           message:
-            "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
+            "Your account has been banned. Please contact an administrator.",
           errorCode: "ACCOUNT_BANNED",
         });
       }
@@ -163,7 +157,6 @@ exports.googleLogin = async (req, res) => {
       await user.save();
     }
 
-    // Nếu mọi thứ ổn, tạo token và đăng nhập
     const { accessToken, refreshToken } = generateTokens(user);
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -179,7 +172,7 @@ exports.googleLogin = async (req, res) => {
   } catch (error) {
     res
       .status(500)
-      .json({ message: "Lỗi xác thực Google.", error: error.message });
+      .json({ message: "Google authentication error.", error: error.message });
   }
 };
 
@@ -196,44 +189,39 @@ exports.login = async (req, res) => {
     if (!user) {
       return res
         .status(400)
-        .json({ message: "Email hoặc mật khẩu không đúng." });
+        .json({ message: "Invalid email or password." });
     }
 
     const isMatch = await bcrypt.compare(password, user.password || "");
     if (!isMatch) {
       return res
         .status(400)
-        .json({ message: "Email hoặc mật khẩu không đúng." });
+        .json({ message: "Invalid email or password." });
     }
 
-    // --- THAY ĐỔI Ở ĐÂY: Dùng switch-case để kiểm tra status ---
-    // Logic này chỉ chạy sau khi đã xác thực mật khẩu thành công.
     switch (user.status) {
       case "verified":
-        // Nếu status là 'verified', không làm gì cả và đi tiếp đến phần tạo token.
         break;
 
       case "unverified":
         return res.status(403).json({
-          message: "Vui lòng xác thực email của bạn trước khi đăng nhập.",
+          message: "Please verify your email before logging in.",
           errorCode: "ACCOUNT_NOT_VERIFIED",
         });
 
       case "banned":
         return res.status(403).json({
           message:
-            "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
+            "Your account has been banned. Please contact an administrator.",
           errorCode: "ACCOUNT_BANNED",
         });
 
       default:
-        // Xử lý các trường hợp status không xác định khác nếu có
         return res
           .status(500)
-          .json({ message: "Trạng thái tài khoản không xác định." });
+          .json({ message: "Unknown account status." });
     }
 
-    // Nếu tất cả đều qua (chỉ trường hợp status = 'verified'), đăng nhập thành công
     const { accessToken, refreshToken } = generateTokens(user);
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -247,12 +235,12 @@ exports.login = async (req, res) => {
 
     res.status(200).json({ accessToken, user: userObject });
   } catch (error) {
-    res.status(500).json({ message: "Lỗi máy chủ", error: error.message });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 /**
- * @desc    Reset password using token
+ * @desc    Reset password using token (for web)
  * @route   POST /api/auth/reset-password/:token
  * @access  Public
  */
@@ -263,19 +251,19 @@ exports.resetPassword = async (req, res) => {
     if (!token)
       return res
         .status(400)
-        .json({ message: "Token không hợp lệ hoặc đã hết hạn." });
+        .json({ message: "Invalid or expired token." });
 
     const user = await User.findById(token.userId);
     if (!user)
-      return res.status(400).json({ message: "Không tìm thấy người dùng." });
+      return res.status(400).json({ message: "User not found." });
 
     user.password = await bcrypt.hash(newPassword, 12);
     await user.save();
     await token.deleteOne();
 
-    res.status(200).json({ message: "Đặt lại mật khẩu thành công." });
+    res.status(200).json({ message: "Password has been reset successfully." });
   } catch (error) {
-    res.status(500).json({ message: "Lỗi máy chủ" });
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -287,13 +275,13 @@ exports.resetPassword = async (req, res) => {
 exports.refreshToken = async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
   if (!refreshToken)
-    return res.status(401).json({ message: "Không có quyền truy cập." });
+    return res.status(401).json({ message: "Access denied. No refresh token provided." });
 
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await User.findById(decoded.id);
     if (!user)
-      return res.status(401).json({ message: "Người dùng không tồn tại." });
+      return res.status(401).json({ message: "User does not exist." });
 
     const accessToken = jwt.sign(
       { id: user._id, role: user.role },
@@ -302,7 +290,7 @@ exports.refreshToken = async (req, res) => {
     );
     res.status(200).json({ accessToken });
   } catch (error) {
-    return res.status(403).json({ message: "Refresh token không hợp lệ." });
+    return res.status(403).json({ message: "Invalid refresh token." });
   }
 };
 
@@ -313,7 +301,7 @@ exports.refreshToken = async (req, res) => {
  */
 exports.logout = (req, res) => {
   res.cookie("refreshToken", "", { httpOnly: true, expires: new Date(0) });
-  res.status(200).json({ message: "Đăng xuất thành công." });
+  res.status(200).json({ message: "Logged out successfully." });
 };
 
 /**
@@ -325,49 +313,45 @@ exports.resendVerificationEmail = async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
-      return res.status(400).json({ message: "Vui lòng cung cấp email." });
+      return res.status(400).json({ message: "Please provide an email." });
     }
 
     const user = await User.findOne({ email });
 
-    // Vẫn trả về thành công nếu không tìm thấy user để tránh bị dò email
     if (!user) {
       return res.status(200).json({
         message:
-          "Nếu email này đã được đăng ký, một liên kết xác thực mới đã được gửi.",
+          "If this email is registered, a new verification link has been sent.",
       });
     }
 
-    // Nếu tài khoản đã được xác thực rồi
     if (user.status === "verified") {
       return res
         .status(400)
-        .json({ message: "Tài khoản này đã được xác thực." });
+        .json({ message: "This account is already verified." });
     }
 
-    // Xóa token cũ nếu có
     await Token.findOneAndDelete({ userId: user._id });
 
-    // Tạo và gửi token mới
     const verificationToken = crypto.randomBytes(32).toString("hex");
     await new Token({ userId: user._id, token: verificationToken }).save();
 
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
-    const htmlMessage = `<p>Vui lòng nhấp vào nút dưới đây để xác thực email của bạn:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
+    const htmlMessage = `<p>Please click the button below to verify your email:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
 
-    await sendEmail(user.email, "Xác thực Email", htmlMessage);
+    await sendEmail(user.email, "Email Verification", htmlMessage);
 
     res.status(200).json({
-      message: "Một liên kết xác thực mới đã được gửi đến email của bạn.",
+      message: "A new verification link has been sent to your email.",
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Lỗi máy chủ" });
+    res.status(500).json({ message: "Server error" });
   }
 };
 
 /**
- * @desc    Forgot password
+ * @desc    Forgot password (for web)
  * @route   POST /api/auth/forgot-password
  * @access  Public
  */
@@ -379,7 +363,7 @@ exports.forgotPassword = async (req, res) => {
     if (!user) {
       return res.status(200).json({
         message:
-          "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+          "If the email exists in our system, a password reset link has been sent.",
       });
     }
 
@@ -390,19 +374,19 @@ exports.forgotPassword = async (req, res) => {
     await new Token({ userId: user._id, token: resetToken }).save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
-    const htmlMessage = `<p>Vui lòng nhấp vào nút dưới đây để đặt lại mật khẩu (liên kết có hiệu lực trong 1 giờ):</p><a href="${resetUrl}" target="_blank">Đặt lại mật khẩu</a>`;
+    const htmlMessage = `<p>Please click the button below to reset your password (link is valid for 1 hour):</p><a href="${resetUrl}" target="_blank">Reset Password</a>`;
 
-    await sendEmail(user.email, "Yêu cầu đặt lại mật khẩu", htmlMessage);
+    await sendEmail(user.email, "Password Reset Request", htmlMessage);
     res.status(200).json({
-      message: "Nếu email tồn tại, một liên kết đặt lại mật khẩu đã được gửi.",
+      message: "If the email exists in our system, a password reset link has been sent.",
     });
   } catch (error) {
-    res.status(500).json({ message: "Lỗi máy chủ" });
+    res.status(500).json({ message: "Server error" });
   }
 };
 
 /**
- * @desc    [MOBILE] Gửi mã đặt lại mật khẩu qua email
+ * @desc    [MOBILE] Send password reset code via email
  * @route   POST /api/auth/mobile/send-reset-code
  * @access  Public
  */
@@ -410,48 +394,41 @@ exports.sendMobileResetCode = async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) {
-            return res.status(400).json({ message: "Vui lòng cung cấp email." });
+            return res.status(400).json({ message: "Please provide an email." });
         }
 
         const user = await User.findOne({ email });
 
-        // Để tránh lộ thông tin, luôn trả về thông báo thành công
         if (!user) {
             return res.status(200).json({
-                message: "Nếu email tồn tại trong hệ thống, mã khôi phục đã được gửi.",
+                message: "If the email exists in our system, a recovery code has been sent.",
             });
         }
 
-        // 1. Tạo mã ngẫu nhiên 4 chữ số
-        const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
-
-        // 2. Hash mã này để lưu vào DB an toàn
+        const resetCode = Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit code
         user.mobileResetCodeHash = await bcrypt.hash(resetCode, 10);
-
-        // 3. Đặt thời gian hết hạn (10 phút)
-        user.mobileResetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 phút
+        user.mobileResetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
 
         await user.save();
 
-        // 4. Gửi mã (chưa hash) đến email
-        const htmlMessage = `<p>Mã đặt lại mật khẩu cho ứng dụng di động của bạn là:</p>
+        const htmlMessage = `<p>Your password reset code for the mobile app is:</p>
                              <h2 style="text-align:center;letter-spacing:3px;">${resetCode}</h2>
-                             <p>Mã này có hiệu lực trong 10 phút.</p>`;
+                             <p>This code is valid for 10 minutes.</p>`;
         
-        await sendEmail(user.email, "Mã Đặt Lại Mật Khẩu Ứng Dụng", htmlMessage);
+        await sendEmail(user.email, "Mobile App Password Reset Code", htmlMessage);
         
         res.status(200).json({
-            message: "Mã khôi phục đã được gửi đến email của bạn.",
+            message: "A recovery code has been sent to your email.",
         });
 
     } catch (error) {
-        console.error("Lỗi khi gửi mã reset cho mobile:", error);
-        res.status(500).json({ message: "Lỗi máy chủ" });
+        console.error("Error sending reset code for mobile:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
 /**
- * @desc    [MOBILE] Xác thực mã và đặt lại mật khẩu mới
+ * @desc    [MOBILE] Verify code and reset new password
  * @route   POST /api/auth/mobile/reset-with-code
  * @access  Public
  */
@@ -459,36 +436,33 @@ exports.resetPasswordWithCode = async (req, res) => {
     try {
         const { email, code, newPassword } = req.body;
         if (!email || !code || !newPassword) {
-            return res.status(400).json({ message: "Vui lòng cung cấp email, code, và mật khẩu mới." });
+            return res.status(400).json({ message: "Please provide email, code, and newPassword." });
         }
 
-        // Tìm user VÀ kiểm tra mã chưa hết hạn
         const user = await User.findOne({
             email,
             mobileResetCodeExpires: { $gt: Date.now() },
-        }).select('+mobileResetCodeHash'); // Phải dùng select() để lấy trường ẩn
+        }).select('+mobileResetCodeHash');
 
         if (!user) {
-            return res.status(400).json({ message: "Mã không hợp lệ hoặc đã hết hạn." });
+            return res.status(400).json({ message: "Invalid or expired code." });
         }
 
-        // So sánh mã người dùng nhập với mã trong DB
         const isMatch = await bcrypt.compare(code, user.mobileResetCodeHash);
         if (!isMatch) {
-            return res.status(400).json({ message: "Mã không hợp lệ." });
+            return res.status(400).json({ message: "Invalid code." });
         }
 
-        // Nếu hợp lệ, cập nhật mật khẩu và xóa mã
-        user.password = newPassword; // .pre('save') sẽ tự động hash
+        user.password = newPassword;
         user.mobileResetCodeHash = undefined;
         user.mobileResetCodeExpires = undefined;
         
         await user.save();
 
-        res.status(200).json({ message: "Mật khẩu đã được đặt lại thành công." });
+        res.status(200).json({ message: "Password has been reset successfully." });
 
     } catch (error) {
-        console.error("Lỗi khi reset mật khẩu bằng code:", error);
-        res.status(500).json({ message: "Lỗi máy chủ" });
+        console.error("Error resetting password with code:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
