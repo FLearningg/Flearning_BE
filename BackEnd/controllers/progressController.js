@@ -442,6 +442,56 @@ const getIncompleteCourses = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get details of completed lessons for a user in a course
+ * @route   GET /api/progress/:courseId/completed-lessons
+ * @access  Private
+ */
+const getCompletedLessonsDetails = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const userId = req.user.id;
+
+    // Check if user is enrolled in the course
+    const user = await require("../models/userModel").findById(userId).select("enrolledCourses");
+    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not enrolled in this course",
+      });
+    }
+
+    // Get user's progress for this course
+    const progress = await Progress.findOne({
+      studentId: userId,
+      courseId: courseId,
+    });
+
+    if (!progress || !progress.completedLessons || progress.completedLessons.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        message: "No completed lessons found",
+      });
+    }
+
+    // Get lesson details
+    const lessons = await Lesson.find({ _id: { $in: progress.completedLessons } });
+
+    res.status(200).json({
+      success: true,
+      data: lessons,
+      count: lessons.length,
+    });
+  } catch (error) {
+    console.error("Error getting completed lessons details:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while getting completed lessons details",
+    });
+  }
+};
+
 module.exports = {
   getCourseProgress,
   markLessonCompleted,
@@ -449,4 +499,5 @@ module.exports = {
   getAllCoursesProgress,
   getCompletedCourses,
   getIncompleteCourses,
+  getCompletedLessonsDetails,
 };

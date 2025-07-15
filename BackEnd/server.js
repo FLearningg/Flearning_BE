@@ -24,6 +24,7 @@ const conversationRoutes = require("./routes/conversationRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
 const progressRoutes = require("./routes/progressRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
+const watchCourseRoute = require("./routes/WatchCourseRoute");
 
 const app = express();
 
@@ -169,6 +170,7 @@ app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/progress", progressRoutes);
 //Payment routes
 app.use("/api/payment", paymentRoutes);
+app.use("/api/watch-course", watchCourseRoute);
 
 console.log("✅ [SERVER] All routes configured");
 
