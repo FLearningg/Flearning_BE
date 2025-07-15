@@ -9,8 +9,8 @@ const {
   forgotPassword,
   resetPassword,
   resendVerificationEmail,
-  mobileSendResetCode,
-  mobileResetWithCode,
+  sendMobileResetCode,
+  resetPasswordWithCode,
 } = require("../controllers/authController");
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.post("/forgot-password", forgotPassword);
 router.post("/reset-password/:token", resetPassword);
 router.post("/resend-verification", resendVerificationEmail);
 
-router.post('/mobile/send-reset-code', mobileSendResetCode);
-router.post('/mobile/reset-with-code', mobileResetWithCode);
+router.post('/mobile/send-reset-code', sendMobileResetCode);
+router.post('/mobile/reset-with-code', resetPasswordWithCode);
 
 module.exports = router;
