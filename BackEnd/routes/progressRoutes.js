@@ -7,6 +7,7 @@ const {
   getAllCoursesProgress,
   getCompletedCourses,
   getIncompleteCourses,
+  getCompletedLessonsDetails,
 } = require("../controllers/progressController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -51,5 +52,12 @@ router.post("/:courseId/lessons/:lessonId/complete", authorize(), markLessonComp
  * @access  Private
  */
 router.delete("/:courseId/lessons/:lessonId/complete", authorize(), markLessonIncomplete);
+
+/**
+ * @route   GET /api/progress/:courseId/completed-lessons
+ * @desc    Get completed lessons details for a specific course
+ * @access  Private
+ */
+router.get("/:courseId/completed-lessons", authorize(), getCompletedLessonsDetails);
 
 module.exports = router; 
