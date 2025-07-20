@@ -5,6 +5,7 @@ const {
   createCourseFeedback,
   updateCourseFeedback,
   deleteCourseFeedback,
+  getCourseAverageRating, // Thêm controller mới
 } = require("../controllers/feedbackController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -23,5 +24,8 @@ router.delete(
   authorize(),
   deleteCourseFeedback
 );
+
+// GET /api/courses/:courseId/average-rating - Get average rating for a course (public)
+router.get("/:courseId/average-rating", getCourseAverageRating);
 
 module.exports = router;

@@ -79,11 +79,7 @@ exports.createCourseFeedback = async (req, res) => {
     const { content, rateStar } = req.body;
     const userId = req.user.id;
 
-    // Validate required fields
-    if (!content || content.trim() === "") {
-      return res.status(400).json({ message: "Feedback content is required." });
-    }
-
+    // Không còn validate content là bắt buộc
     if (!rateStar || rateStar < 1 || rateStar > 5) {
       return res
         .status(400)
@@ -122,7 +118,7 @@ exports.createCourseFeedback = async (req, res) => {
 
     // Create new feedback
     const newFeedback = new Feedback({
-      content: content.trim(),
+      content: content ? content.trim() : undefined,
       rateStar: parseInt(rateStar),
       courseId: courseId,
       userId,
@@ -157,11 +153,7 @@ exports.updateCourseFeedback = async (req, res) => {
     const { content, rateStar } = req.body;
     const userId = req.user.id;
 
-    // Validate required fields
-    if (!content || content.trim() === "") {
-      return res.status(400).json({ message: "Feedback content is required." });
-    }
-
+    // Không còn validate content là bắt buộc
     if (!rateStar || rateStar < 1 || rateStar > 5) {
       return res
         .status(400)
@@ -193,7 +185,7 @@ exports.updateCourseFeedback = async (req, res) => {
     }
 
     // Update feedback
-    feedback.content = content.trim();
+    feedback.content = content ? content.trim() : undefined;
     feedback.rateStar = parseInt(rateStar);
     await feedback.save();
 
@@ -259,6 +251,49 @@ exports.deleteCourseFeedback = async (req, res) => {
     await Feedback.findByIdAndDelete(feedbackId);
 
     res.status(200).json({ message: "Feedback deleted successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Get average rating for a specific course
+ * @route   GET /api/courses/:courseId/average-rating
+ * @access  Public
+ */
+exports.getCourseAverageRating = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    // Validate courseId format
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ message: "Invalid course ID." });
+    }
+
+    // Check if course exists
+    const course = await Course.findOne({ _id: courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Course not found." });
+    }
+
+    // Get all feedback for the course
+    const allFeedback = await Feedback.find({ courseId: courseId });
+
+    // Calculate average rating
+    const averageRating =
+      allFeedback.length > 0
+        ? allFeedback.reduce((sum, fb) => sum + fb.rateStar, 0) / allFeedback.length
+        : 0;
+    const roundedAverage = Math.round(averageRating * 10) / 10;
+
+    // Update rating field in Course
+    await Course.findByIdAndUpdate(courseId, { rating: roundedAverage });
+
+    res.status(200).json({
+      averageRating: roundedAverage, // Round to 1 decimal place
+      totalFeedback: allFeedback.length,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });

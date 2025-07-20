@@ -5,7 +5,7 @@ const FeedbackSchema = new Schema(
   {
     content: {
       type: String,
-      required: true,
+      required: false,
     },
     rateStar: {
       type: Number,
