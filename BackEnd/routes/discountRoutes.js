@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const publicRouter = express.Router();
 const {
   getAllDiscounts,
   getDiscountById,
@@ -7,6 +8,8 @@ const {
   updateDiscount,
   deleteDiscount,
   getDiscountStats,
+  getAvailableDiscounts, // Thêm controller mới
+  increaseDiscountUsage, // Thêm controller tăng usage
 } = require("../controllers/discountController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -52,4 +55,22 @@ router.put("/:discountId", authorize("admin"), updateDiscount);
  */
 router.delete("/:discountId", authorize("admin"), deleteDiscount);
 
-module.exports = router;
+/**
+ * @route   GET /api/discounts/available
+ * @desc    Get available discounts (public)
+ * @access  Public
+ */
+publicRouter.get("/available", getAvailableDiscounts);
+
+/**
+ * @route   POST /api/discounts/:discountId/increase-usage
+ * @desc    Tăng usage cho discount (user thường)
+ * @access  User
+ */
+publicRouter.post(
+  "/:discountId/increase-usage",
+  authorize(),
+  increaseDiscountUsage
+);
+
+module.exports = { adminRouter: router, publicRouter };

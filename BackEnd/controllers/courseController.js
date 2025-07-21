@@ -160,5 +160,41 @@ const courseController = {
       res.status(500).json({ message: error.message });
     }
   },
+  /**
+   * @desc    Gán discount cho khóa học
+   * @route   POST /api/courses/:courseId/assign-discount
+   * @access  Admin
+   */
+  assignDiscountToCourse: async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const { discountId } = req.body;
+      if (!discountId) {
+        return res.status(400).json({ message: "Missing discountId" });
+      }
+      // Kiểm tra tồn tại course
+      const course = await Course.findById(courseId);
+      if (!course) {
+        return res.status(404).json({ message: "Course not found" });
+      }
+      // Kiểm tra tồn tại discount
+      const discount = await Discount.findById(discountId);
+      if (!discount) {
+        return res.status(404).json({ message: "Discount not found" });
+      }
+      // Gán discountId cho course
+      course.discountId = discountId;
+      await course.save();
+      const updatedCourse = await Course.findById(courseId).populate(
+        "discountId"
+      );
+      res.status(200).json({
+        message: "Discount assigned to course successfully",
+        course: updatedCourse,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
 };
 module.exports = courseController;
