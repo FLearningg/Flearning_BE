@@ -440,7 +440,7 @@ exports.getAllCourses = async (req, res) => {
   try {
     const {
       page = 1,
-      limit = 10,
+      // limit = 10,
       search = "",
       categoryId = "",
       level = "",
@@ -495,25 +495,16 @@ exports.getAllCourses = async (req, res) => {
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    // Calculate pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Execute query with pagination
+    // Remove pagination: do not use skip or limit
+    // Execute query without pagination
     const courses = await Course.find(query)
       .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type")
       .populate("sections", "name")
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit));
+      .sort(sort);
 
     // Get total count for pagination
     const totalCourses = await Course.countDocuments(query);
-
-    // Calculate pagination info
-    const totalPages = Math.ceil(totalCourses / parseInt(limit));
-    const hasNextPage = parseInt(page) < totalPages;
-    const hasPrevPage = parseInt(page) > 1;
 
     // Get enrollment count for each course
     const coursesWithEnrollmentCount = await Promise.all(
@@ -532,14 +523,7 @@ exports.getAllCourses = async (req, res) => {
     res.status(200).json({
       success: true,
       data: coursesWithEnrollmentCount,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages,
-        totalCourses,
-        hasNextPage,
-        hasPrevPage,
-        limit: parseInt(limit),
-      },
+      totalCourses,
     });
   } catch (error) {
     console.error("Error in getAllCourses:", error);
@@ -1885,50 +1869,79 @@ exports.getDashboardStats = async (req, res) => {
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Transaction.aggregate([
-        { $match: { status: "completed", createdAt: { $gte: new Date(today.getFullYear(), 0, 1) } } },
-        { $group: { _id: { month: { $month: "$createdAt" } }, total: { $sum: "$amount" } } },
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: new Date(today.getFullYear(), 0, 1) },
+          },
+        },
+        {
+          $group: {
+            _id: { month: { $month: "$createdAt" } },
+            total: { $sum: "$amount" },
+          },
+        },
         { $sort: { "_id.month": 1 } },
       ]),
       User.countDocuments({ createdAt: { $gte: firstDayOfMonth } }),
-      Transaction.find({ status: "completed" }).sort({ createdAt: -1 }).limit(5),
+      Transaction.find({ status: "completed" })
+        .sort({ createdAt: -1 })
+        .limit(5),
       Course.aggregate([
         { $match: { rating: { $exists: true, $ne: null } } },
         {
           $facet: {
             overallStats: [
-              { $group: { _id: null, averageRating: { $avg: "$rating" }, totalCoursesWithRating: { $sum: 1 } } }
+              {
+                $group: {
+                  _id: null,
+                  averageRating: { $avg: "$rating" },
+                  totalCoursesWithRating: { $sum: 1 },
+                },
+              },
             ],
             ratingBreakdown: [
               { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } },
-              { $sort: { _id: -1 } }
-            ]
-          }
-        }
+              { $sort: { _id: -1 } },
+            ],
+          },
+        },
       ]),
     ]);
 
     // Xử lý dữ liệu rating (giữ nguyên)
     let courseRating = { averageRating: 0, breakdown: [] };
-    if (courseRatingData.length > 0 && courseRatingData[0].overallStats.length > 0) {
+    if (
+      courseRatingData.length > 0 &&
+      courseRatingData[0].overallStats.length > 0
+    ) {
       const stats = courseRatingData[0].overallStats[0];
       const breakdownData = courseRatingData[0].ratingBreakdown;
       const totalRatedCourses = stats.totalCoursesWithRating;
       courseRating.averageRating = stats.averageRating;
-      const breakdownMap = new Map(breakdownData.map(item => [item._id, item.count]));
-      courseRating.breakdown = [5, 4, 3, 2, 1].map(star => {
-          const count = breakdownMap.get(star) || 0;
-          return {
-              stars: star,
-              count: count,
-              percentage: totalRatedCourses > 0 ? Math.round((count / totalRatedCourses) * 100) : 0,
-          };
+      const breakdownMap = new Map(
+        breakdownData.map((item) => [item._id, item.count])
+      );
+      courseRating.breakdown = [5, 4, 3, 2, 1].map((star) => {
+        const count = breakdownMap.get(star) || 0;
+        return {
+          stars: star,
+          count: count,
+          percentage:
+            totalRatedCourses > 0
+              ? Math.round((count / totalRatedCourses) * 100)
+              : 0,
+        };
       });
     }
 
     // Xử lý doanh thu theo tháng (giữ nguyên)
     const formattedMonthlySales = Array.from({ length: 12 }, (_, i) => {
       const monthData = monthlySales.find((m) => m._id.month === i + 1);
-      return { month: i + 1, revenue: parseFloat(monthData?.total.toString() || "0"), };
+      return {
+        month: i + 1,
+        revenue: parseFloat(monthData?.total.toString() || "0"),
+      };
     });
 
     res.status(200).json({

@@ -43,4 +43,11 @@ router.delete(
   deleteLessonComment
 );
 
+// Thêm route gán discount cho course (admin)
+router.post(
+  "/:courseId/assign-discount",
+  authMiddleware("admin"),
+  courseController.assignDiscountToCourse
+);
+
 module.exports = router;

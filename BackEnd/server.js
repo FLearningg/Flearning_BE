@@ -18,7 +18,10 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
-const discountRoutes = require("./routes/discountRoutes");
+const {
+  adminRouter: discountAdminRouter,
+  publicRouter: discountPublicRouter,
+} = require("./routes/discountRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const conversationRoutes = require("./routes/conversationRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
@@ -161,7 +164,8 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/conversations", conversationRoutes);
 
 // Discount routes
-app.use("/api/admin/discounts", discountRoutes);
+app.use("/api/admin/discounts", discountAdminRouter);
+app.use("/api/discounts", discountPublicRouter);
 // Profile routes
 app.use("/api/profile", profileRoutes);
 // Chatbot routes

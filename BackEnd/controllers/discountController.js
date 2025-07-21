@@ -444,3 +444,79 @@ exports.getDiscountStats = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Get available discounts (active, not expired, usage not full)
+ * @route   GET /api/discounts/available
+ * @access  Public
+ */
+exports.getAvailableDiscounts = async (req, res) => {
+  try {
+    const now = new Date();
+    // Build filter for available discounts
+    const filter = {
+      status: "active",
+      $or: [
+        { usageLimit: 0 }, // unlimited usage
+        { $expr: { $lt: ["$usage", "$usageLimit"] } }, // usage < usageLimit
+      ],
+      $and: [
+        {
+          $or: [{ startDate: null }, { startDate: { $lte: now } }],
+        },
+        {
+          $or: [{ endDate: null }, { endDate: { $gte: now } }],
+        },
+      ],
+    };
+
+    const discounts = await Discount.find(filter).sort({ createdAt: -1 });
+
+    if (!discounts || discounts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No available discounts found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Get available discounts successfully",
+      data: discounts,
+    });
+  } catch (error) {
+    console.error("Get available discounts error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Tăng usage cho discount
+ * @route   POST /api/discounts/:discountId/increase-usage
+ * @access  User
+ */
+exports.increaseDiscountUsage = async (req, res) => {
+  try {
+    const { discountId } = req.params;
+    const discount = await Discount.findById(discountId);
+    if (!discount) {
+      return res.status(404).json({ message: "Discount not found" });
+    }
+    // Nếu có usageLimit > 0 và usage đã đủ thì không tăng nữa
+    if (discount.usageLimit > 0 && discount.usage >= discount.usageLimit) {
+      return res.status(400).json({ message: "Discount usage limit reached" });
+    }
+    discount.usage += 1;
+    await discount.save();
+    res.status(200).json({
+      message: "Discount usage increased successfully",
+      discount,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
