@@ -7,6 +7,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const cleanupTempFiles = require("./utils/cleanup-temp-files");
 
+
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
@@ -25,6 +26,12 @@ const chatbotRoutes = require("./routes/chatbotRoutes");
 const progressRoutes = require("./routes/progressRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const watchCourseRoute = require("./routes/WatchCourseRoute");
+
+const passport = require('passport');
+const session = require('express-session');
+const morgan = require('morgan');
+
+require("./config/passport"); // Passport configuration
 
 const app = express();
 
@@ -109,6 +116,24 @@ app.use(
 );
 app.use(express.json());
 app.use(cookieParser());
+app.use(morgan('dev'));
+
+// --- START: Thêm middleware cho Passport và Session ---
+// Cấu hình Express Session - Bắt buộc phải có trước passport.session()
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'a-very-strong-secret-key-for-session',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production', // Chỉ gửi cookie qua HTTPS trên production
+    httpOnly: true 
+  }
+}));
+
+// Khởi tạo Passport và Passport Session
+app.use(passport.initialize());
+app.use(passport.session());
+// --- END: Thêm middleware cho Passport và Session ---
 
 console.log("✅ [SERVER] Middleware configured");
 
