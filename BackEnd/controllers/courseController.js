@@ -115,19 +115,42 @@ const courseController = {
   enrollCourse: async (req, res) => {
     try {
       const { userId, courseIds } = req.body;
+
       if (!userId || !Array.isArray(courseIds) || courseIds.length === 0) {
         return res.status(400).json({ message: "Missing userId or courseIds" });
       }
+
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      // Thêm các courseId chưa có vào mảng
+
+      // 1. Lọc ra các khóa học mà người dùng CHƯA đăng ký
       const newCourses = courseIds.filter(
         (id) => !user.enrolledCourses.includes(id)
       );
+
+      // Nếu không có khóa học mới nào để thêm thì báo thành công luôn
+      if (newCourses.length === 0) {
+        return res.status(200).json({
+          message: "User is already enrolled in all specified courses.",
+          enrolledCourses: user.enrolledCourses,
+          addedCourses: [],
+        });
+      }
+
+      // 2. Cập nhật cho User: Thêm các khóa học mới vào danh sách của user
       user.enrolledCourses.push(...newCourses);
       await user.save();
+
+      // 3. LOGIC MỚI: Cập nhật cho các Course
+      // Thêm userId vào mảng studentsEnrolled của TẤT CẢ các khóa học mới
+      await Course.updateMany(
+        { _id: { $in: newCourses } }, // Điều kiện: Tìm tất cả course có _id nằm trong mảng newCourses
+        { $addToSet: { studentsEnrolled: userId } } // Hành động: Thêm userId vào mảng studentsEnrolled
+      );
+
+      // 4. Trả về kết quả thành công
       res.status(200).json({
         message: "Courses enrolled successfully",
         enrolledCourses: user.enrolledCourses,
