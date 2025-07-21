@@ -32,35 +32,38 @@ const addTransaction = async (req, res) => {
   try {
     const {
       userId,
-      paymentId,
-      gatewayId,
+      gatewayTransactionId,
       type,
       amount,
       currency,
-      createdAt,
-      updatedAt,
       description,
       courseId,
     } = req.body;
 
-    if (!userId || !amount || !type || !currency || !createdAt || !updatedAt) {
-      return res
-        .status(400)
-        .json({ message: "Missing required transaction fields." });
+    if (
+      !userId ||
+      !amount ||
+      !type ||
+      !currency ||
+      !courseId ||
+      !Array.isArray(courseId) ||
+      courseId.length === 0
+    ) {
+      return res.status(400).json({
+        message:
+          "Missing required fields. `courseId` must be a non-empty array.",
+      });
     }
 
     const newTransaction = new Transaction({
       userId: new mongoose.Types.ObjectId(userId),
-      paymentId: new mongoose.Types.ObjectId(paymentId),
-      gatewayTransactionId: new mongoose.Types.ObjectId(gatewayId),
+      gatewayTransactionId,
       type,
       amount,
       currency,
       status: "completed",
-      createdAt,
-      updatedAt,
       description,
-      courseId: new mongoose.Types.ObjectId(courseId),
+      courseId,
     });
 
     await newTransaction.save();
@@ -71,6 +74,11 @@ const addTransaction = async (req, res) => {
     });
   } catch (err) {
     console.error("Error adding transaction:", err);
+    if (err.code === 11000) {
+      return res
+        .status(409)
+        .json({ message: "Duplicate gatewayTransactionId." });
+    }
     res.status(500).json({ message: "Server error.", error: err.message });
   }
 };
