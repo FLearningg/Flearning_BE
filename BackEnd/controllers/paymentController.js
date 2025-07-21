@@ -40,6 +40,7 @@ const addTransaction = async (req, res) => {
       createdAt,
       updatedAt,
       description,
+      courseId,
     } = req.body;
 
     if (!userId || !amount || !type || !currency || !createdAt || !updatedAt) {
@@ -59,6 +60,7 @@ const addTransaction = async (req, res) => {
       createdAt,
       updatedAt,
       description,
+      courseId: new mongoose.Types.ObjectId(courseId),
     });
 
     await newTransaction.save();
