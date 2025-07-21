@@ -11,8 +11,14 @@ const CategoryController = {
         {
           $lookup: {
             from: "courses",
-            localField: "_id",
-            foreignField: "categoryId",
+            let: { categoryId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $in: ["$$categoryId", "$categoryIds"] },
+                },
+              },
+            ],
             as: "courses",
           },
         },
@@ -21,27 +27,20 @@ const CategoryController = {
             courseCount: { $size: "$courses" },
           },
         },
-        {
-          $sort: {
-            courseCount: -1,
-          },
-        },
-        {
-          $limit: 12,
-        },
+        { $sort: { courseCount: -1 } },
+        { $limit: 12 },
         {
           $project: {
             _id: 1,
-            name: 1, // Name of the category
-            icon: 1, // Icon of the category
-            courseCount: 1, // Number of courses
+            name: 1,
+            icon: 1,
+            courseCount: 1,
           },
         },
       ]);
       if (!categories || categories.length === 0) {
         return res.status(404).json({ message: "Không tìm thấy danh mục nào" });
       }
-
       res.status(200).json(categories);
     } catch (error) {
       res.status(500).json({ message: error.message });
