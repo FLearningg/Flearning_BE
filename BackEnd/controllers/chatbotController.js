@@ -14,6 +14,7 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 // --- CẬP NHẬT SONG NGỮ ---
 // Mô tả Schema cho Gemini hiểu (Mô tả song ngữ)
+// Mô tả Schema cho Gemini hiểu (Mô tả song ngữ)
 const schemaDescription = `
 You have access to a MongoDB database with the following collections and schemas:
 
@@ -32,17 +33,13 @@ You have access to a MongoDB database with the following collections and schemas
     -   lastName (String): User's last name / Họ.
     -   role (String, enum: ['student', 'admin']): User role / Vai trò người dùng.
     -   status (String, enum: ['verified', 'unverified', 'banned']): Account status / Trạng thái tài khoản.
+    -   enrolledCourses (Array of ObjectId): References to the courses the user is enrolled in / Tham chiếu đến các khóa học người dùng đã đăng ký.
     -   createdAt (Date): Registration date / Ngày đăng ký.
 
 3.  **categories**: Stores course categories / Lưu trữ danh mục khóa học.
     -   name (String): The name of the category (e.g., 'Programming', 'Lập trình').
 
-4.  **enrollments**: Links users to enrolled courses / Liên kết người dùng và khóa học.
-    -   userId (ObjectId): Reference to the user / Tham chiếu đến người dùng.
-    -   courseId (ObjectId): Reference to the course / Tham chiếu đến khóa học.
-    -   createdAt (Date): The date of enrollment / Ngày đăng ký.
-
-5.  **transactions**: Stores payment transactions / Lưu trữ các giao dịch thanh toán.
+4.  **transactions**: Stores payment transactions / Lưu trữ các giao dịch thanh toán.
     -   amount (Number): Transaction amount / Số tiền giao dịch.
     -   status (String, enum: ['completed', 'pending', 'failed']): Transaction status / Trạng thái giao dịch.
     -   createdAt (Date): The date of the transaction / Ngày giao dịch.
@@ -67,15 +64,23 @@ Analyze the user's question.
 - The "options" can include 'limit', 'sort', 'select'. Default limit is 10.
 - Do NOT add any text or explanation before or after the JSON object.
 
+// --- THÊM MỚI: QUY TẮC LẤY KHÓA HỌC CỦA NGƯỜI DÙNG ---
+- **SPECIAL RULE:** If the user asks for **their own enrolled courses**, respond with this specific JSON:
+  { "collection": "users", "query": { "action": "get_enrolled_courses" } }
+// --- KẾT THÚC THÊM MỚI ---
+
 Example Questions and expected responses:
 - User (Vietnamese): "Liệt kê 5 người dùng gần đây" -> { "collection": "users", "query": {}, "options": { "sort": { "createdAt": -1 }, "limit": 5, "select": "firstName lastName email createdAt" } }
 - User (English): "List the 5 most recent users" -> { "collection": "users", "query": {}, "options": { "sort": { "createdAt": -1 }, "limit": 5, "select": "firstName lastName email createdAt" } }
+- User (Vietnamese): "Các khóa học của tôi" -> { "collection": "users", "query": { "action": "get_enrolled_courses" } }
+- User (English): "My enrolled courses" -> { "collection": "users", "query": { "action": "get_enrolled_courses" } }
 - User (Vietnamese): "Kể cho tôi một câu chuyện cười" -> You should tell a joke in Vietnamese.
 - User (English): "Tell me a joke" -> You should tell a joke in English.
 `;
 
 exports.handleQuery = async (req, res) => {
     try {
+        const userId = req.user?.id;
         const userPrompt = req.body.prompt;
         if (!userPrompt) {
             return res.status(400).json({ error: "Prompt is required" });
@@ -83,29 +88,33 @@ exports.handleQuery = async (req, res) => {
 
         const fullPromptForAnalysis = `${systemPrompt}\n\n${schemaDescription}\n\nUser Question: "${userPrompt}"`;
         
-        // --- Step 1: Gemini analyzes the prompt ---
         let analysisResult = await model.generateContent(fullPromptForAnalysis);
         let analysisText = analysisResult.response.text().trim();
 
-        // --- Step 2: Check if Gemini returned a query or a direct answer ---
         let queryJson;
         try {
             const jsonString = analysisText.replace(/```json/g, '').replace(/```/g, '').trim();
             queryJson = JSON.parse(jsonString);
         } catch (e) {
-            // It's a direct answer, not a query
             return res.json({ reply: analysisText });
         }
+        
+        let dbResults;
 
-        // --- Step 3: If it's a query, execute it ---
-        if (queryJson && queryJson.collection && queryJson.query) {
+        if (queryJson.query?.action === 'get_enrolled_courses') {
+            if (!userId) {
+                return res.json({ reply: "Please log in to see your enrolled courses. / Vui lòng đăng nhập để xem các khóa học của bạn." });
+            }
+            const userWithCourses = await User.findById(userId).populate('enrolledCourses').lean();
+            dbResults = userWithCourses ? userWithCourses.enrolledCourses : [];
+        } 
+        else if (queryJson.collection && queryJson.query) {
             const { collection, query, options = {} } = queryJson;
             
             const modelMap = {
                 'courses': Course,
                 'users': User,
                 'categories': Category,
-                'enrollments': Enrollment,
                 'transactions': Transaction,
             };
 
@@ -118,39 +127,34 @@ exports.handleQuery = async (req, res) => {
             const sort = options.sort || {};
             const select = options.select || '';
 
-            const dbResults = await dbModel.find(query).limit(limit).sort(sort).select(select).lean();
-            
-            if (!dbResults || dbResults.length === 0) {
-                // --- CẬP NHẬT SONG NGỮ ---
-                return res.json({ reply: "I couldn't find any information for that question. / Tôi không thể tìm thấy thông tin nào cho câu hỏi này." });
-            }
-            
-            // --- Step 4: Ask Gemini to summarize the data into a friendly response ---
-            const clientUrl = process.env.CLIENT_URL;
-const promptForSummary = `
-                Based on the user's original question and the data I retrieved, please formulate a friendly and natural-sounding response.
-                **IMPORTANT: Respond in the same language as the "Original Question" (Vietnamese or English).**
-
-                **CRITICAL RULE: If your response includes the title of a course from the data, you MUST format it as a Markdown hyperlink.**
-                The link format is: \`[Course Title](${clientUrl}/course/COURSE_ID)\`.
-                Example: If a course is \`{ "title": "Learn React", "_id": "665811a18faddc92a1c652d5" }\`, you must write it as \`[Learn React](${clientUrl}/course/665811a18faddc92a1c652d5)\`.
-
-                Original Question: "${userPrompt}"
-
-                Retrieved Data (JSON):
-                ${JSON.stringify(dbResults, null, 2)}
-
-                Your Response (in the original language, with Markdown links for courses):
-            `;
-
-            const summaryResult = await model.generateContent(promptForSummary);
-            const finalReply = summaryResult.response.text();
-            
-            return res.json({ reply: finalReply });
-        } else {
-             // Fallback if the JSON is malformed but was parsed
-             res.json({ reply: analysisText });
+            dbResults = await dbModel.find(query).limit(limit).sort(sort).select(select).lean();
         }
+
+        // Phần code còn lại để tóm tắt và trả về kết quả giữ nguyên...
+        if (!dbResults || dbResults.length === 0) {
+            return res.json({ reply: "I couldn't find any information for that question. / Tôi không thể tìm thấy thông tin nào cho câu hỏi này." });
+        }
+        
+        const clientUrl = process.env.CLIENT_URL;
+        const promptForSummary = `
+            Based on the user's original question and the data I retrieved, please formulate a friendly and natural-sounding response.
+            **IMPORTANT: Respond in the same language as the "Original Question" (Vietnamese or English).**
+
+            **CRITICAL RULE: If your response includes the title of a course from the data, you MUST format it as a Markdown hyperlink.**
+            The link format is: \`[Course Title](${clientUrl}/course/COURSE_ID)\`.
+            
+            Original Question: "${userPrompt}"
+
+            Retrieved Data (JSON):
+            ${JSON.stringify(dbResults, null, 2)}
+
+            Your Response (in the original language, with Markdown links for courses):
+        `;
+
+        const summaryResult = await model.generateContent(promptForSummary);
+        const finalReply = summaryResult.response.text();
+        
+        return res.json({ reply: finalReply });
 
     } catch (error) {
         console.error("Chatbot Error:", error);

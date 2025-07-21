@@ -1854,16 +1854,32 @@ exports.getDashboardStats = async (req, res) => {
     const [
       totalUsers,
       totalCourses,
-      totalEnrollments,
+      // THAY ĐỔI: Đổi tên biến để nhận kết quả từ aggregation
+      totalEnrollmentsResult,
       totalRevenueResult,
       monthlySales,
       newUsersThisMonth,
       latestTransactions,
-      courseRatingData, 
+      courseRatingData,
     ] = await Promise.all([
       User.countDocuments(),
       Course.countDocuments(),
-      Enrollment.countDocuments(),
+      // THAY ĐỔI: Dùng aggregation trên User để tính tổng số lượt ghi danh
+      User.aggregate([
+        // Giai đoạn 1: Tính số lượng khóa học mỗi người dùng đã đăng ký
+        {
+          $project: {
+            enrollmentCount: { $size: { $ifNull: ["$enrolledCourses", []] } },
+          },
+        },
+        // Giai đoạn 2: Tính tổng số lượt đăng ký từ tất cả người dùng
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$enrollmentCount" },
+          },
+        },
+      ]),
       Transaction.aggregate([
         { $match: { status: "completed" } },
         { $group: { _id: null, total: { $sum: "$amount" } } },
@@ -1875,37 +1891,29 @@ exports.getDashboardStats = async (req, res) => {
       ]),
       User.countDocuments({ createdAt: { $gte: firstDayOfMonth } }),
       Transaction.find({ status: "completed" }).sort({ createdAt: -1 }).limit(5),
-
       Course.aggregate([
         { $match: { rating: { $exists: true, $ne: null } } },
         {
           $facet: {
-            // Nhánh 1: Tính rating trung bình và tổng số khóa học có rating
-            "overallStats": [
+            overallStats: [
               { $group: { _id: null, averageRating: { $avg: "$rating" }, totalCoursesWithRating: { $sum: 1 } } }
             ],
-            // Nhánh 2: Đếm số lượng khóa học cho mỗi mức sao
-            "ratingBreakdown": [
-              { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } }, // Làm tròn rating để gom nhóm (ví dụ 4.5 -> 5)
-              { $sort: { _id: -1 } } // Sắp xếp từ 5 sao xuống 1 sao
+            ratingBreakdown: [
+              { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } },
+              { $sort: { _id: -1 } }
             ]
           }
         }
       ]),
     ]);
 
-    // Xử lý dữ liệu rating để tính phần trăm
-    let courseRating = {
-      averageRating: 0,
-      breakdown: []
-    };
+    // Xử lý dữ liệu rating (giữ nguyên)
+    let courseRating = { averageRating: 0, breakdown: [] };
     if (courseRatingData.length > 0 && courseRatingData[0].overallStats.length > 0) {
       const stats = courseRatingData[0].overallStats[0];
       const breakdownData = courseRatingData[0].ratingBreakdown;
       const totalRatedCourses = stats.totalCoursesWithRating;
-
       courseRating.averageRating = stats.averageRating;
-      
       const breakdownMap = new Map(breakdownData.map(item => [item._id, item.count]));
       courseRating.breakdown = [5, 4, 3, 2, 1].map(star => {
           const count = breakdownMap.get(star) || 0;
@@ -1917,23 +1925,22 @@ exports.getDashboardStats = async (req, res) => {
       });
     }
 
+    // Xử lý doanh thu theo tháng (giữ nguyên)
     const formattedMonthlySales = Array.from({ length: 12 }, (_, i) => {
       const monthData = monthlySales.find((m) => m._id.month === i + 1);
-      return {
-        month: i + 1,
-        revenue: parseFloat(monthData?.total.toString() || "0"),
-      };
+      return { month: i + 1, revenue: parseFloat(monthData?.total.toString() || "0"), };
     });
 
     res.status(200).json({
       totalUsers,
       totalCourses,
-      totalEnrollments,
+      // THAY ĐỔI: Lấy kết quả totalEnrollments từ aggregation
+      totalEnrollments: totalEnrollmentsResult[0]?.total || 0,
       totalRevenue: parseFloat(totalRevenueResult[0]?.total.toString() || "0"),
       newUsersThisMonth,
       monthlySales: formattedMonthlySales,
       latestTransactions,
-      courseRating, 
+      courseRating,
     });
   } catch (error) {
     console.error("Lỗi khi lấy dữ liệu thống kê:", error);
