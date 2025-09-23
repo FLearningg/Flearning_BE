@@ -6,12 +6,17 @@ const LessonSchema = new Schema(
     courseId: { type: Schema.Types.ObjectId, ref: "Course", required: true },
     sectionId: { type: Schema.Types.ObjectId, ref: "Section", required: true },
     title: { type: String, required: true },
-    description: String,
-    lessonNotes: String,
-    videoUrl: String,
-    captions: String,
-    duration: Number, // Duration in seconds
+    description: { type: String },
+    lessonNotes: { type: String },
+    type: {
+      type: String,
+      enum: ["video", "article", "quiz"],
+      required: true,
+    },
+    materialUrl: { type: String }, // URL to video or article
+    duration: { type: Number }, // Duration in seconds
     order: { type: Number, default: 0 }, // For ordering lessons within a section
+    quizIds: [{ type: Schema.Types.ObjectId, ref: "Quiz" }],
   },
   { timestamps: true, collection: "lessons" }
 );
