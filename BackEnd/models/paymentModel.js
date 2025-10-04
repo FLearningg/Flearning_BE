@@ -7,16 +7,7 @@ const paymentSchema = new mongoose.Schema(
       ref: "Enrollment",
       required: true,
     },
-    courseId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: true,
-    },
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+    // courseId and userId intentionally omitted: use enrollmentId -> Enrollment contains userId and courseId
     amount: {
       type: mongoose.Schema.Types.Decimal128,
       required: true,

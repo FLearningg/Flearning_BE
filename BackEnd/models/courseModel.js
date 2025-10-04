@@ -20,6 +20,8 @@ const CourseSchema = new Schema(
     categoryIds: [{ type: Types.ObjectId, ref: "Category" }],
     price: { type: Number },
     discountId: { type: Types.ObjectId, ref: "Discount" },
+    // The user who created / published the course (instructor or admin)
+    createdBy: { type: Types.ObjectId, ref: "User" },
     rating: { type: Number },
     level: { type: String, enum: ["beginner", "intermediate", "advanced"] },
     duration: { type: String },
