@@ -12,6 +12,11 @@ const enrollmentSchema = new mongoose.Schema(
       ref: "Course",
       required: true,
     },
+    status: {
+      type: String,
+      enum: ["enrolled", "completed", "cancelled"],
+      default: "enrolled",
+    },
   },
   { timestamps: true, collection: "enrollments" }
 );

@@ -1,34 +1,25 @@
 const mongoose = require("mongoose");
-const Schema = mongoose.Schema;
+const { Schema, Types } = mongoose;
 
 const UserSchema = new Schema(
   {
-    firstName: String,
-    lastName: String,
-    userName: { type: String, unique: true },
-    biography: String,
+    firstName: { type: String },
+    lastName: { type: String },
+    // userName: { type: String, unique: true }, move sang instructor profile
     email: { type: String, unique: true },
-    password: String,
+    password: { type: String }, // hashed
     role: {
       type: String,
-      enum: ["admin", "student"],
+      enum: ["admin", "instructor", "student"],
       default: "student",
     },
+    userImage: { type: String },
     status: {
       type: String,
-      enum: ["unverified", "verified","banned"],
+      enum: ["unverified", "verified", "banned"],
       default: "unverified",
     },
-    enrolledCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
-    userImage: String,
-    mobileResetCodeHash: {
-        type: String,
-        select: false, 
-    },
-    mobileResetCodeExpires: {
-        type: Date,
-        select: false,
-    },
+    // biography: String, move sang instructor profile
   },
   { timestamps: true, collection: "users" }
 );
