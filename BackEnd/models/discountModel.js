@@ -1,23 +1,19 @@
 const mongoose = require("mongoose");
-const Schema = mongoose.Schema;
+const { Schema } = mongoose;
 
 const DiscountSchema = new Schema(
   {
-    discountCode: String,
-    description: String,
-    category: {
-      type: String,
-      enum: ["general", "seasonal", "welcome", "special"],
-    },
+    discountCode: { type: String },
+    description: { type: String },
     type: { type: String, enum: ["percent", "fixedAmount"] },
-    value: Number,
+    value: { type: Number },
     usage: { type: Number, default: 0 },
-    usageLimit: Number,
+    usageLimit: { type: Number },
     status: { type: String, enum: ["active", "expired", "inActive"] },
-    minimumOrder: Number,
-    maximumDiscount: Number,
-    startDate: Date,
-    endDate: Date,
+    minimumOrder: { type: Number },
+    maximumDiscount: { type: Number },
+    startDate: { type: Date },
+    endDate: { type: Date },
   },
   { timestamps: true, collection: "discounts" }
 );

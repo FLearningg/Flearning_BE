@@ -1,22 +1,15 @@
+// paymentModel.js
 const mongoose = require("mongoose");
 
 const paymentSchema = new mongoose.Schema(
   {
-    enrollmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Enrollment",
-      required: true,
-    },
-    courseId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: true,
-    },
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+    enrollmentIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Enrollment",
+        required: true,
+      },
+    ],
     amount: {
       type: mongoose.Schema.Types.Decimal128,
       required: true,
@@ -27,14 +20,16 @@ const paymentSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
+      default: "PayOS",
     },
     transactionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Transaction",
+      required: true,
     },
     status: {
       type: String,
-      enum: ["pending", "completed", "failed", "refunded"],
+      enum: ["pending", "completed", "failed", "refunded", "cancelled"],
       default: "pending",
     },
   },

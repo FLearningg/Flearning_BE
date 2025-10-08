@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
-const Schema = mongoose.Schema;
-
+const { Schema, Types } = mongoose;
+const { MaterialSchema } = require("./MaterialModel.js");
 const CourseSchema = new Schema(
   {
-    title: String,
-    subTitle: String,
+    title: { type: String },
+    subTitle: { type: String },
     message: {
       welcome: String,
       congrats: String,
@@ -15,19 +15,25 @@ const CourseSchema = new Schema(
       targetAudience: [String],
       requirement: [String],
     },
-    materials: [String],
-    studentsEnrolled: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    thumbnail: String,
-    trailer: String,
-    categoryIds: [{ type: Schema.Types.ObjectId, ref: "Category" }],
-    price: Number,
-    discountId: { type: Schema.Types.ObjectId, ref: "Discount" },
-    rating: Number,
+    thumbnail: { type: String },
+    trailer: { type: String },
+    categoryIds: [{ type: Types.ObjectId, ref: "Category" }],
+    price: { type: Number },
+    discountId: { type: Types.ObjectId, ref: "Discount" },
+    // The user who created / published the course (instructor or admin)
+    createdBy: { type: Types.ObjectId, ref: "User" },
+    rating: { type: Number },
     level: { type: String, enum: ["beginner", "intermediate", "advanced"] },
-    duration: String,
+    duration: { type: String },
     language: { type: String, enum: ["vietnam", "english"] },
     subtitleLanguage: { type: String, enum: ["vietnam", "english"] },
     sections: [{ type: Schema.Types.ObjectId, ref: "Section" }],
+    status: {
+      type: String,
+      enum: ["active", "inactive", "draft"],
+      default: "draft",
+    },
+    materials: [MaterialSchema],
   },
   { timestamps: true, collection: "courses" }
 );

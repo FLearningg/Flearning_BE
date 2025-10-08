@@ -247,21 +247,27 @@ function extractSourceDestination(firebaseUrl) {
  */
 const getEnrolledCourses = async (req, res) => {
   try {
-    const userId = req.user.id; // From auth middleware (string)
+    const userId = req.user.id;
 
-    // Find user and populate enrolledCourses
-    const user = await User.findById(userId).populate({
-      path: "enrolledCourses",
+    // BƯỚC 1: Thay đổi truy vấn từ User.findById sang Enrollment.find
+    // Tìm tất cả các bản ghi ghi danh của người dùng có trạng thái là "enrolled"
+    const enrollments = await Enrollment.find({
+      userId: userId,
+      status: "enrolled",
+    }).populate({
+      // BƯỚC 2: Populate thông tin chi tiết của khóa học từ trường 'courseId'
+      path: "courseId",
+      select:
+        "title subTitle thumbnail price rating level duration language categoryIds createdAt instructor",
       populate: {
+        // Đây là nested populate để lấy thông tin category
         path: "categoryIds",
         model: "Category",
         select: "name",
       },
-      select:
-        "title subTitle thumbnail price rating level duration language categoryIds createdAt instructor",
     });
 
-    if (!user || !user.enrolledCourses || user.enrolledCourses.length === 0) {
+    if (!enrollments || enrollments.length === 0) {
       return res.status(200).json({
         success: true,
         message: "No enrolled courses found",
@@ -270,32 +276,43 @@ const getEnrolledCourses = async (req, res) => {
       });
     }
 
-    // Extract course information from enrolledCourses
-    const enrolledCourses = user.enrolledCourses.map((course) => ({
-      course: {
-        id: course._id,
-        title: course.title,
-        subTitle: course.subTitle,
-        thumbnail: course.thumbnail,
-        price: course.price,
-        rating: course.rating,
-        level: course.level,
-        duration: course.duration,
-        language: course.language,
-        instructor: course.instructor || null, // fallback if not present
-        category:
-          course.categoryIds && course.categoryIds.length > 0
-            ? course.categoryIds[0].name
-            : null,
-        createdAt: course.createdAt,
-      },
-    }));
+    // BƯỚC 3: Trích xuất và định dạng lại dữ liệu từ kết quả enrollments
+    // Dữ liệu khóa học bây giờ nằm trong enrollment.courseId
+    const enrolledCoursesData = enrollments
+      .map((enrollment) => {
+        // Kiểm tra để đảm bảo courseId không bị null (do lỗi dữ liệu)
+        if (!enrollment.courseId) {
+          return null;
+        }
+        const course = enrollment.courseId; // Lấy object course đã được populate
+
+        return {
+          course: {
+            id: course._id,
+            title: course.title,
+            subTitle: course.subTitle,
+            thumbnail: course.thumbnail,
+            price: course.price,
+            rating: course.rating,
+            level: course.level,
+            duration: course.duration,
+            language: course.language,
+            instructor: course.instructor || null,
+            category:
+              course.categoryIds && course.categoryIds.length > 0
+                ? course.categoryIds[0].name
+                : null,
+            createdAt: course.createdAt,
+          },
+        };
+      })
+      .filter((item) => item !== null); // Lọc bỏ các kết quả null nếu có
 
     res.status(200).json({
       success: true,
       message: "Enrolled courses retrieved successfully",
-      data: enrolledCourses,
-      count: enrolledCourses.length,
+      data: enrolledCoursesData,
+      count: enrolledCoursesData.length,
     });
   } catch (error) {
     console.error("Error in getEnrolledCourses:", error);
