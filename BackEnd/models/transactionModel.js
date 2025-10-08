@@ -2,13 +2,25 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
+    orderCode: {
+      type: Number,
+      required: true,
+      unique: true,
+    },
+    paymentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payment",
+      // required: true, // Có thể không required ngay lúc đầu nếu bạn tạo transaction trước
+    },
     gatewayTransactionId: {
       type: String,
-      unique: true,
+      unique: true, // Giữ lại unique
+      sparse: true, // <<< THÊM DÒNG NÀY
     },
     type: {
       type: String,
       enum: ["sale", "refund", "chargeback"],
+      default: "sale",
     },
     amount: {
       type: mongoose.Schema.Types.Decimal128,
@@ -17,11 +29,12 @@ const transactionSchema = new mongoose.Schema(
     currency: {
       type: String,
       required: true,
-      default: "USD",
+      default: "VND",
     },
     status: {
       type: String,
-      enum: ["pending", "completed", "failed", "refunded"],
+      enum: ["pending", "completed", "failed", "refunded", "cancelled"],
+      default: "pending",
     },
     description: {
       type: String,
@@ -31,13 +44,6 @@ const transactionSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    courseId: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Course",
-        required: true,
-      }
-    ],
   },
   { timestamps: true, collection: "transactions" }
 );
