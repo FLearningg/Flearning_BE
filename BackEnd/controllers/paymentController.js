@@ -193,6 +193,7 @@ const createPaymentLink = async (req, res) => {
  */
 const handlePayOsWebhook = async (req, res) => {
   const webhookData = req.body;
+  console.log("[WEBHOOK] Received webhook data:", webhookData);
   try {
     console.log("[WEBHOOK] Đã nhận được request, bắt đầu xác thực...");
     const verifiedData = payOs.webhooks.verify(webhookData);
