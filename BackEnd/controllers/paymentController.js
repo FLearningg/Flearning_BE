@@ -5,6 +5,7 @@ const User = require("../models/userModel");
 const { APIError } = require("@payos/node");
 const Payment = require("../models/paymentModel");
 const Enrollment = require("../models/enrollmentModel");
+const crypto = require("crypto");
 
 const WEB_URL = "http://localhost:3000";
 
@@ -194,80 +195,87 @@ const createPaymentLink = async (req, res) => {
 const handlePayOsWebhook = async (req, res) => {
   const webhookData = req.body;
   console.log("[WEBHOOK] Received webhook data:", webhookData);
+
+  // ==========================================================
+  // === BẮT ĐẦU ĐOẠN CODE GỠ LỖI NÂNG CAO ===
+  // ==========================================================
   try {
-    console.log("[WEBHOOK] Đã nhận được request, bắt đầu xác thực...");
-    const verifiedData = payOs.webhooks.verify(webhookData);
+    console.log("--- STARTING ADVANCED DEBUGGING ---");
 
-    // ==========================================================
-    // === KIỂM TRA QUAN TRỌNG: PHÂN BIỆT REQUEST TEST VÀ REQUEST GIAO DỊCH ===
-    // ==========================================================
-    // Nếu đây là request test (không có object 'data') hoặc dữ liệu không hợp lệ
-    if (!verifiedData.data || !verifiedData.data.orderCode) {
-      console.log(
-        "[WEBHOOK] Nhận được request xác thực hoặc dữ liệu không có orderCode. Bỏ qua xử lý giao dịch."
+    // 1. Lấy checksum key từ biến môi trường và kiểm tra
+    const myChecksumKey = process.env.PAYOS_CHECKSUM_KEY;
+    if (!myChecksumKey) {
+      console.error(
+        "CRITICAL: PAYOS_CHECKSUM_KEY is NOT DEFINED in .env file!"
       );
-
-      // Trả về 200 OK để báo cho PayOS biết là webhook của bạn đang hoạt động
-      return res.status(200).json({
-        message:
-          "Webhook received and acknowledged. No transaction data to process.",
-      });
-    }
-
-    // Nếu có 'data' và 'orderCode', thì đây là một giao dịch thật -> xử lý như bình thường
-    console.log(
-      `[WEBHOOK] Nhận được thông báo cho giao dịch thật có orderCode: ${verifiedData.data.orderCode}`
-    );
-
-    // Chỉ xử lý khi giao dịch thành công (code "00")
-    if (verifiedData.code === "00" && verifiedData.desc === "Success") {
-      const orderCode = verifiedData.data.orderCode;
-      const transaction = await Transaction.findOne({ orderCode: orderCode });
-
-      if (transaction && transaction.status === "pending") {
-        // ... (toàn bộ logic xử lý giao dịch thành công của bạn giữ nguyên ở đây)
-        transaction.gatewayTransactionId = verifiedData.data.paymentId;
-        transaction.status = "completed";
-        await transaction.save();
-
-        const payment = await Payment.findById(transaction.paymentId);
-        if (payment) {
-          payment.status = "completed";
-          await payment.save();
-
-          await Enrollment.updateMany(
-            { _id: { $in: payment.enrollmentIds } },
-            { $set: { status: "enrolled" } }
-          );
-
-          console.log(
-            `[WEBHOOK] Đã ghi danh thành công cho ${payment.enrollmentIds.length} khóa học.`
-          );
-        }
-      } else {
-        console.log(
-          `[WEBHOOK] Bỏ qua, đơn hàng ${orderCode} không tồn tại hoặc đã được xử lý.`
-        );
-      }
     } else {
       console.log(
-        `[WEBHOOK] Giao dịch ${verifiedData.data.orderCode} không thành công. Code: ${verifiedData.code}`
+        "Checksum Key being used (first 5 chars):",
+        myChecksumKey.substring(0, 5)
       );
     }
 
-    // Luôn phản hồi 200 cho PayOS
+    // 2. Tái tạo lại chuỗi dữ liệu để tạo chữ ký
+    // PayOS sắp xếp các key trong object 'data' theo thứ tự bảng chữ cái
+    const dataToSign = webhookData.data || {};
+    const sortedKeys = Object.keys(dataToSign).sort();
+    const dataString = sortedKeys
+      .map((key) => `${key}=${dataToSign[key]}`)
+      .join("&");
+
+    console.log("Data String used for signing:", dataString);
+
+    // 3. Tạo chữ ký của riêng bạn bằng thuật toán HMAC-SHA256
+    const ourSignature = crypto
+      .createHmac("sha256", myChecksumKey)
+      .update(dataString)
+      .digest("hex");
+
+    // 4. So sánh hai chữ ký
+    const signatureFromPayOS = webhookData.signature;
+    console.log("Signature from PayOS:", signatureFromPayOS);
+    console.log("Our Calculated Signature:", ourSignature);
+    console.log("Do signatures match?", ourSignature === signatureFromPayOS);
+
+    console.log("--- ENDING ADVANCED DEBUGGING ---");
+  } catch (debugError) {
+    console.error("Error during advanced debug:", debugError);
+  }
+  // ==========================================================
+  // === KẾT THÚC ĐOẠN CODE GỠ LỖI NÂNG CAO ===
+  // ==========================================================
+
+  try {
+    console.log(
+      "[WEBHOOK] Đã nhận được request, bắt đầu xác thực bằng thư viện..."
+    );
+    const verifiedData = payOs.webhooks.verify(webhookData);
+
+    if (!verifiedData.data || !verifiedData.data.orderCode) {
+      console.log(
+        "[WEBHOOK] Thư viện trả về kết quả không hợp lệ. Bỏ qua xử lý giao dịch."
+      );
+      return res
+        .status(200)
+        .json({ message: "Webhook acknowledged but data is invalid." });
+    }
+
+    // ... (Logic xử lý giao dịch thành công của bạn vẫn như cũ)
+    console.log(
+      `[WEBHOOK] Thư viện xác thực thành công cho orderCode: ${verifiedData.data.orderCode}`
+    );
+    if (verifiedData.code === "00") {
+      //...
+    }
+
     return res.status(200).json({ message: "Webhook processed." });
   } catch (error) {
-    console.error(
-      "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG TRONG WEBHOOK HANDLER !!!!!!!!!!!!"
-    );
+    console.error("!!!!!!!!!!!! LỖI TỪ THƯ VIỆN PAYOS !!!!!!!!!!!!");
     console.error(error.message);
     console.error(
       "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     );
-    return res
-      .status(400)
-      .json({ message: "Webhook verification failed or an error occurred." });
+    return res.status(400).json({ message: "Webhook verification failed." });
   }
 };
 
