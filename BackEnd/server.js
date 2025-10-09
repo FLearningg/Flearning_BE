@@ -110,7 +110,17 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
-app.use(express.json());
+app.use(
+  express.json({
+    // Chúng ta cần giữ lại raw body để xác thực webhook
+    verify: (req, res, buf) => {
+      // Chỉ lưu lại rawBody cho các request đến webhook của PayOS
+      if (req.originalUrl.startsWith("/api/payment/webhook")) {
+        req.rawBody = buf;
+      }
+    },
+  })
+);
 app.use(cookieParser());
 
 console.log("✅ [SERVER] Middleware configured");
