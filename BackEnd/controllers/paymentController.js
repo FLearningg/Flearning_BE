@@ -194,39 +194,46 @@ const createPaymentLink = async (req, res) => {
 const handlePayOsWebhook = async (req, res) => {
   const webhookData = req.body;
   try {
-    console.log("[WEBHOOK] Bắt đầu xác thực dữ liệu...");
-
-    // ==========================================================
-    // === SỬA LỖI Ở ĐÂY ===
-    // ==========================================================
-    // Hàm đúng là 'payOs.webhooks.verify()', không phải 'payOs.verifyPaymentWebhook()'
+    console.log("[WEBHOOK] Đã nhận được request, bắt đầu xác thực...");
     const verifiedData = payOs.webhooks.verify(webhookData);
-    // ==========================================================
 
+    // ==========================================================
+    // === KIỂM TRA QUAN TRỌNG: PHÂN BIỆT REQUEST TEST VÀ REQUEST GIAO DỊCH ===
+    // ==========================================================
+    // Nếu đây là request test (không có object 'data') hoặc dữ liệu không hợp lệ
+    if (!verifiedData.data || !verifiedData.data.orderCode) {
+      console.log(
+        "[WEBHOOK] Nhận được request xác thực hoặc dữ liệu không có orderCode. Bỏ qua xử lý giao dịch."
+      );
+
+      // Trả về 200 OK để báo cho PayOS biết là webhook của bạn đang hoạt động
+      return res.status(200).json({
+        message:
+          "Webhook received and acknowledged. No transaction data to process.",
+      });
+    }
+
+    // Nếu có 'data' và 'orderCode', thì đây là một giao dịch thật -> xử lý như bình thường
     console.log(
-      `[WEBHOOK] Xác thực thành công cho đơn hàng: ${verifiedData.data.orderCode}`
+      `[WEBHOOK] Nhận được thông báo cho giao dịch thật có orderCode: ${verifiedData.data.orderCode}`
     );
 
     // Chỉ xử lý khi giao dịch thành công (code "00")
     if (verifiedData.code === "00" && verifiedData.desc === "Success") {
       const orderCode = verifiedData.data.orderCode;
-
       const transaction = await Transaction.findOne({ orderCode: orderCode });
 
-      // Đảm bảo chỉ xử lý các transaction đang chờ và chưa được xử lý
       if (transaction && transaction.status === "pending") {
-        // 1. Cập nhật bản ghi Transaction
+        // ... (toàn bộ logic xử lý giao dịch thành công của bạn giữ nguyên ở đây)
         transaction.gatewayTransactionId = verifiedData.data.paymentId;
         transaction.status = "completed";
         await transaction.save();
 
-        // 2. Cập nhật bản ghi Payment cha
         const payment = await Payment.findById(transaction.paymentId);
         if (payment) {
           payment.status = "completed";
           await payment.save();
 
-          // 3. Thực hiện nghiệp vụ sau thanh toán
           await Enrollment.updateMany(
             { _id: { $in: payment.enrollmentIds } },
             { $set: { status: "enrolled" } }
@@ -241,19 +248,25 @@ const handlePayOsWebhook = async (req, res) => {
           `[WEBHOOK] Bỏ qua, đơn hàng ${orderCode} không tồn tại hoặc đã được xử lý.`
         );
       }
+    } else {
+      console.log(
+        `[WEBHOOK] Giao dịch ${verifiedData.data.orderCode} không thành công. Code: ${verifiedData.code}`
+      );
     }
 
-    // Luôn phản hồi 200 cho PayOS để tránh bị gọi lại webhook
-    return res.status(200).json({ message: "Webhook received" });
+    // Luôn phản hồi 200 cho PayOS
+    return res.status(200).json({ message: "Webhook processed." });
   } catch (error) {
     console.error(
       "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG TRONG WEBHOOK HANDLER !!!!!!!!!!!!"
     );
-    console.error(error.message); // Log lỗi cụ thể hơn
+    console.error(error.message);
     console.error(
       "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     );
-    return res.status(400).json({ message: "Webhook verification failed" });
+    return res
+      .status(400)
+      .json({ message: "Webhook verification failed or an error occurred." });
   }
 };
 
