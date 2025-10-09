@@ -196,10 +196,12 @@ const handlePayOsWebhook = async (req, res) => {
   const webhookData = req.body;
 
   try {
-    console.log("[WEBHOOK] Received a request, starting verification...");
+    console.log(
+      "[WEBHOOK] Received a request, starting verification with raw body..."
+    );
 
     // 1. Xác thực chữ ký và tính toàn vẹn của dữ liệu từ PayOS
-    const verifiedData = payOs.webhooks.verify(webhookData);
+    const verifiedData = payOs.webhooks.verify(req.rawBody);
 
     // 2. Kiểm tra xem đây là request test từ PayOS hay request không hợp lệ
     // Request test sẽ không có object 'data' hoặc không có 'orderCode'
@@ -207,11 +209,9 @@ const handlePayOsWebhook = async (req, res) => {
       console.log(
         "[WEBHOOK] Received a verification request or invalid data. Skipping transaction processing."
       );
-      return res
-        .status(200)
-        .json({
-          message: "Webhook acknowledged but no transaction data to process.",
-        });
+      return res.status(200).json({
+        message: "Webhook acknowledged but no transaction data to process.",
+      });
     }
 
     console.log(
