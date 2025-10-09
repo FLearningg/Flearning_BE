@@ -116,7 +116,7 @@ app.use(
     verify: (req, res, buf) => {
       // Chỉ lưu lại rawBody cho các request đến webhook của PayOS
       if (req.originalUrl.startsWith("/api/payment/webhook")) {
-        req.rawBody = buf;
+        req.rawBody = buf.toString("utf8");
       }
     },
   })
