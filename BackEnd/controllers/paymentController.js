@@ -9,6 +9,62 @@ const crypto = require("crypto");
 
 const WEB_URL = "http://localhost:3000";
 
+function sortObjectForSignature(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map((it) => sortObjectForSignature(it));
+  if (typeof obj !== "object") return obj;
+
+  const keys = Object.keys(obj).sort();
+  const out = {};
+  for (const k of keys) {
+    out[k] = sortObjectForSignature(obj[k]);
+  }
+  return out;
+}
+
+function objectToQueryString(obj, prefix = "") {
+  const result = [];
+  const sortedKeys = Object.keys(obj).sort();
+
+  for (const key of sortedKeys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const fullKey = prefix ? `${prefix}[${key}]` : key;
+      const value = obj[key];
+      if (value === null || value === undefined) {
+        result.push(`${fullKey}=`);
+        continue;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          if (item === null || item === undefined) {
+            result.push(`${fullKey}[${index}]=`);
+          } else if (typeof item === "object") {
+            const sorted = sortObjectForSignature(item);
+            result.push(`${fullKey}[${index}]=${JSON.stringify(sorted)}`);
+          } else {
+            result.push(`${fullKey}[${index}]=${String(item)}`);
+          }
+        });
+      } else if (typeof value === "object") {
+        result.push(...objectToQueryString(value, fullKey));
+      } else {
+        result.push(`${fullKey}=${String(value)}`);
+      }
+    }
+  }
+  return result;
+}
+
+function createSignature(data) {
+  const dataQueries = objectToQueryString(data);
+  const sortedQueries = dataQueries.sort();
+  const dataString = sortedQueries.join("&");
+  return crypto
+    .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
+    .update(dataString)
+    .digest("hex");
+}
+
 /**
  * @desc    Proxy API to fetch VietQR payment info (e.g., QR code for payment) [Abandoned]
  * @route   GET /api/payments/transactions
@@ -194,60 +250,51 @@ const createPaymentLink = async (req, res) => {
  */
 const handlePayOsWebhook = async (req, res) => {
   const webhookData = req.body;
+  console.log("[WEBHOOK] Received webhook data:", webhookData);
 
   try {
-    console.log(
-      "[WEBHOOK] Received a request, starting verification with raw body..."
-    );
+    // Bước 1: Xác thực chữ ký bằng logic đúng từ code cũ của bạn
+    const expectedSignature = createSignature(webhookData.data || {});
+    const signatureFromPayOS = webhookData.signature;
 
-    // 1. Xác thực chữ ký và tính toàn vẹn của dữ liệu từ PayOS
-    const verifiedData = payOs.webhooks.verify(req.rawBody);
-
-    // 2. Kiểm tra xem đây là request test từ PayOS hay request không hợp lệ
-    // Request test sẽ không có object 'data' hoặc không có 'orderCode'
-    if (!verifiedData.data || !verifiedData.data.orderCode) {
-      console.log(
-        "[WEBHOOK] Received a verification request or invalid data. Skipping transaction processing."
-      );
-      return res.status(200).json({
-        message: "Webhook acknowledged but no transaction data to process.",
-      });
+    if (expectedSignature !== signatureFromPayOS) {
+      console.error("[WEBHOOK] Invalid signature.");
+      return res
+        .status(400)
+        .json({ message: "Webhook verification failed: Invalid signature." });
     }
 
-    console.log(
-      `[WEBHOOK] Verification successful for orderCode: ${verifiedData.data.orderCode}`
-    );
+    console.log("[WEBHOOK] Signature verified successfully.");
 
-    // 3. Chỉ xử lý khi giao dịch được xác nhận là thành công từ PayOS (code: "00")
-    if (verifiedData.code === "00" && verifiedData.desc === "Success") {
-      const orderCode = verifiedData.data.orderCode;
+    // Bước 2: Xử lý logic nghiệp vụ
+    const data = webhookData.data;
 
-      // Tìm giao dịch tương ứng trong DB
+    if (!data || !data.orderCode) {
+      console.log(
+        "[WEBHOOK] Received a test request or data is missing orderCode. Skipping."
+      );
+      return res
+        .status(200)
+        .json({ message: "Webhook acknowledged, no data to process." });
+    }
+
+    if (webhookData.code === "00") {
+      const orderCode = data.orderCode;
       const transaction = await Transaction.findOne({ orderCode: orderCode });
 
-      // 4. Đảm bảo giao dịch tồn tại và đang ở trạng thái chờ (`pending`) để tránh xử lý trùng lặp
       if (transaction && transaction.status === "pending") {
-        console.log(
-          `[WEBHOOK] Processing transaction for orderCode: ${orderCode}`
-        );
-
-        // Cập nhật Transaction
-        transaction.gatewayTransactionId = verifiedData.data.reference; // Hoặc verifiedData.data.paymentId tùy vào dữ liệu PayOS
+        transaction.gatewayTransactionId = data.reference;
         transaction.status = "completed";
         await transaction.save();
 
-        // Cập nhật Payment
         const payment = await Payment.findById(transaction.paymentId);
         if (payment) {
           payment.status = "completed";
           await payment.save();
-
-          // Cập nhật tất cả Enrollment liên quan thành "enrolled"
           await Enrollment.updateMany(
             { _id: { $in: payment.enrollmentIds } },
             { $set: { status: "enrolled" } }
           );
-
           console.log(
             `[WEBHOOK] Successfully enrolled user for ${payment.enrollmentIds.length} courses.`
           );
@@ -257,23 +304,14 @@ const handlePayOsWebhook = async (req, res) => {
           `[WEBHOOK] Skipping. Order ${orderCode} not found or already processed.`
         );
       }
-    } else {
-      console.log(
-        `[WEBHOOK] Transaction for orderCode ${verifiedData.data.orderCode} was not successful. Status: ${verifiedData.desc}`
-      );
     }
 
-    // 5. Luôn phản hồi 200 OK để PayOS biết đã nhận được webhook
     return res.status(200).json({ message: "Webhook processed." });
   } catch (error) {
-    console.error(
-      "!!!!!!!!!!!! CRITICAL WEBHOOK ERROR !!!!!!!!!!!!",
-      error.message
-    );
-    // Trả về lỗi 400 nếu chữ ký không hợp lệ hoặc có lỗi nghiêm trọng khác
+    console.error("!!!!!!!!!!!! CRITICAL WEBHOOK ERROR !!!!!!!!!!!!", error);
     return res
-      .status(400)
-      .json({ message: "Webhook verification failed or an error occurred." });
+      .status(500)
+      .json({ message: "An internal server error occurred." });
   }
 };
 
