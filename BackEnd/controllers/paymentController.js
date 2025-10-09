@@ -155,7 +155,7 @@ const addTransaction = async (req, res) => {
  * @access  Private
  */
 const createPaymentLink = async (req, res) => {
-  const { description, price, courseIds } = req.body; // Bỏ cancelUrl, packageType nếu không dùng
+  const { description, price, courseIds } = req.body;
   const userId = req.user.id;
 
   if (!description || !price || !courseIds || courseIds.length === 0) {
@@ -178,10 +178,7 @@ const createPaymentLink = async (req, res) => {
     const newEnrollments = await Promise.all(enrollmentPromises);
     const newEnrollmentIds = newEnrollments.map((e) => e._id);
 
-    // Tạo orderCode an toàn hơn
-    const orderCode = parseInt(
-      Date.now().toString() + Math.floor(Math.random() * 1000)
-    );
+    const orderCode = Date.now();
 
     // BƯỚC 2: Tạo một Payment duy nhất
     const newPayment = new Payment({
@@ -189,23 +186,19 @@ const createPaymentLink = async (req, res) => {
       paymentDate: new Date(),
       amount: price,
       status: "pending",
-      // transactionId sẽ được thêm ở bước sau
     });
 
     // BƯỚC 3: Tạo Transaction và liên kết với Payment
     const transaction = new Transaction({
-      userId, // Giữ lại userId ở đây để check quyền truy cập dễ hơn
+      userId,
       amount: price,
       status: "pending",
       description,
       orderCode: orderCode,
-      paymentId: newPayment._id, // Liên kết transaction với payment
+      paymentId: newPayment._id,
     });
-
-    // Gán ngược lại transactionId cho payment
     newPayment.transactionId = transaction._id;
 
-    // Lưu cả hai vào DB trong cùng session
     await newPayment.save({ session });
     await transaction.save({ session });
 
@@ -216,15 +209,13 @@ const createPaymentLink = async (req, res) => {
       orderCode: orderCode,
       returnUrl: `${process.env.CLIENT_URL}/payment/success?orderCode=${orderCode}`,
       cancelUrl: `${process.env.CLIENT_URL}/payment/cancelled?orderCode=${orderCode}`,
-      buyerName: req.user.fullName,
+      buyerName: req.user.fullName || req.user.email,
       buyerEmail: req.user.email,
     };
 
     console.log("Dữ liệu gửi đến PayOS:", payosOrder);
-
     const paymentLinkResponse = await payOs.paymentRequests.create(payosOrder);
 
-    // Nếu mọi thứ thành công, commit transaction
     await session.commitTransaction();
 
     res.status(200).json({
@@ -232,12 +223,27 @@ const createPaymentLink = async (req, res) => {
       checkoutUrl: paymentLinkResponse.checkoutUrl,
     });
   } catch (error) {
-    // Nếu có lỗi, hủy bỏ tất cả thay đổi
     await session.abortTransaction();
-    console.error("Lỗi khi tạo link thanh toán:", error);
+
+    // ==========================================================
+    // === KHỐI LOG LỖI CHI TIẾT ĐÃ ĐƯỢC THÊM VÀO ĐÂY ===
+    // ==========================================================
+    console.error(
+      "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG KHI TẠO LINK THANH TOÁN !!!!!!!!!!!!"
+    );
+    console.error("Time:", new Date().toISOString());
+    console.error("Error Message:", error.message);
+
+    // In ra toàn bộ object lỗi để xem các thuộc tính ẩn như 'error.code' hoặc 'error.error' từ PayOS
+    // Dùng JSON.stringify để đảm bảo không có thông tin nào bị ẩn đi
+    console.error("Full Error Object:", JSON.stringify(error, null, 2));
+
+    console.error(
+      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    );
+
     res.status(500).json({ message: "Không thể tạo link thanh toán." });
   } finally {
-    // Luôn kết thúc session
     session.endSession();
   }
 };
@@ -279,7 +285,7 @@ const handlePayOsWebhook = async (req, res) => {
     }
 
     if (webhookData.code === "00") {
-      const orderCode = data.orderCode;
+      const orderCode = parseInt(data.orderCode);
       const transaction = await Transaction.findOne({ orderCode: orderCode });
 
       if (transaction && transaction.status === "pending") {
