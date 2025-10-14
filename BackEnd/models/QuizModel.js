@@ -21,7 +21,7 @@ const QuizQuestionSchema = new Schema(
 
 const QuizSchema = new Schema(
   {
-    courseId: { type: Types.ObjectId, ref: "Course", required: true },
+    courseId: { type: Types.ObjectId, ref: "Course", required: false },
     lessonId: { type: Types.ObjectId, ref: "Lesson" },
     userId: { type: Types.ObjectId, ref: "User" },
     title: { type: String, required: true },

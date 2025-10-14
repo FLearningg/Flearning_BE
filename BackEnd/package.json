@@ -24,6 +24,7 @@
     "google-auth-library": "^10.1.0",
     "googleapis": "^144.0.0",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.11.0",
     "mongoose": "^8.16.1",
     "multer": "^2.0.1",
     "nodemailer": "^7.0.3",
