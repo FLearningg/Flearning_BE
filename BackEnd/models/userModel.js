@@ -11,23 +11,23 @@ const UserSchema = new Schema(
     password: String,
     role: {
       type: String,
-      enum: ["admin", "student"],
+      enum: ["admin", "student", "instructor"],
       default: "student",
     },
     status: {
       type: String,
-      enum: ["unverified", "verified","banned"],
+      enum: ["unverified", "verified", "banned"],
       default: "unverified",
     },
     enrolledCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
     userImage: String,
     mobileResetCodeHash: {
-        type: String,
-        select: false, 
+      type: String,
+      select: false,
     },
     mobileResetCodeExpires: {
-        type: Date,
-        select: false,
+      type: Date,
+      select: false,
     },
   },
   { timestamps: true, collection: "users" }
