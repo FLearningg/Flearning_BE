@@ -20,6 +20,8 @@ const {
   getLesson,
   moveLessonVideo,
   getAllCategories,
+  deleteLessonFile,
+  updateLessonFile,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -64,8 +66,10 @@ router.put("/courses/:courseId/lessons/:lessonId", updateLesson);
 router.delete("/courses/:courseId/lessons/:lessonId", deleteLesson);
 router.get("/courses/:courseId/lessons/:lessonId", getLesson);
 
-// Lesson video management route
+// Lesson file management routes
 router.post("/courses/:courseId/lessons/:lessonId/move-video", moveLessonVideo);
+router.delete("/lessons/:lessonId/file", deleteLessonFile);
+router.put("/lessons/:lessonId/file", updateLessonFile);
 
 // File management routes
 router.post("/upload", upload.single("file"), uploadToFirebase);

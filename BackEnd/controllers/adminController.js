@@ -5,9 +5,44 @@ const Category = require("../models/categoryModel");
 const Discount = require("../models/discountModel");
 const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
+const Quiz = require("../models/QuizModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const Transaction = require("../models/transactionModel");
+
+/**
+ * Helper function to extract file name from URL
+ * @param {string} url - Firebase storage URL or any URL
+ * @returns {string} - Extracted file name
+ */
+const extractFileNameFromUrl = (url) => {
+  try {
+    if (!url) return "Unknown File";
+
+    // Handle Firebase storage URLs
+    if (url.includes("firebasestorage.googleapis.com")) {
+      // Extract filename from Firebase storage URL
+      // Format: https://firebasestorage.googleapis.com/v0/b/bucket/o/path%2Ffilename.ext?...
+      const decodedUrl = decodeURIComponent(url);
+      const match = decodedUrl.match(/\/([^\/\?]+)(?:\?|$)/);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+
+    // Fallback: extract from regular URL
+    const urlParts = url.split("/");
+    const lastPart = urlParts[urlParts.length - 1];
+
+    // Remove query parameters
+    const fileName = lastPart.split("?")[0];
+
+    return fileName || "Unknown File";
+  } catch (error) {
+    console.error("Error extracting filename from URL:", error);
+    return "Unknown File";
+  }
+};
 
 /**
  * Helper function to move file from temporary to course folder
@@ -554,7 +589,20 @@ async function extractValidCategoryIds(reqBody) {
       cat = await Category.findById(catId);
     }
     if (!cat) {
-      cat = await Category.findOne({ name: catId });
+      // Try to find by exact name first
+      if (typeof catId === "string" && catId.trim() !== "") {
+        cat = await Category.findOne({ name: catId.trim() });
+      }
+      // If not found and the client sent a string name, create the category to keep UX smooth
+      if (!cat && typeof catId === "string" && catId.trim() !== "") {
+        try {
+          const newCat = new Category({ name: catId.trim() });
+          cat = await newCat.save();
+        } catch (e) {
+          // If create fails (race condition or validation), try to re-find
+          cat = await Category.findOne({ name: catId.trim() });
+        }
+      }
     }
     if (cat) validCategories.push(cat._id);
   }
@@ -602,11 +650,29 @@ exports.createCourse = async (req, res) => {
     if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0)
       errors.push("price is required and must be a positive number");
     if (errors.length > 0) {
+      console.warn("createCourse validation failed", {
+        errors,
+        body: req.body,
+      });
+      // Return a bit more info to the client to aid debugging (avoid sensitive data)
       return res.status(400).json({
         success: false,
         message: "Validation failed: " + errors.join(", "),
         errors: errors,
-        receivedData: { title, subTitle, detail, price },
+        receivedData: {
+          title,
+          subTitle,
+          detailSummary:
+            detail && typeof detail === "object"
+              ? { description: detail.description }
+              : null,
+          price,
+          categoryFields: {
+            category: req.body.category,
+            categoryId: req.body.categoryId,
+            categoryIds: req.body.categoryIds,
+          },
+        },
       });
     }
 
@@ -656,7 +722,6 @@ exports.createCourse = async (req, res) => {
       language: language || "vietnam",
       subtitleLanguage: subtitleLanguage || "vietnam",
       sections: [],
-      studentsEnrolled: [],
     });
 
     const savedCourse = await newCourse.save();
@@ -722,16 +787,17 @@ exports.createCourse = async (req, res) => {
     // Check for individual lesson videos (alternative format)
     if (uploadedFiles.lessons && Array.isArray(uploadedFiles.lessons)) {
       uploadedFiles.lessons.forEach((lesson, index) => {
-        if (lesson.videoUrl) {
-          const videoUrl = lesson.videoUrl;
-          const sourceDestination = extractSourceDestination(videoUrl);
+        // support both legacy videoUrl and new materialUrl
+        const lessonMediaUrl = lesson.videoUrl || lesson.materialUrl;
+        if (lessonMediaUrl) {
+          const sourceDestination = extractSourceDestination(lessonMediaUrl);
           if (sourceDestination) {
             filesToMove.push({
               sourceDestination,
               folderType: "section-data",
               fileType: "lesson-video",
               lessonIndex: index,
-              originalUrl: videoUrl,
+              originalUrl: lessonMediaUrl,
             });
           }
         }
@@ -751,12 +817,13 @@ exports.createCourse = async (req, res) => {
       console.log(`  - Section ${sectionIndex + 1}: ${lessons.length} lessons`);
 
       lessons.forEach((lesson, lessonIndex) => {
-        if (lesson.videoUrl) {
+        // support both legacy videoUrl and new materialUrl field names
+        const lessonMediaUrl = lesson.videoUrl || lesson.materialUrl;
+        if (lessonMediaUrl) {
           console.log(
-            `    - Lesson ${lessonIndex + 1} has video URL: ${lesson.videoUrl}`
+            `    - Lesson ${lessonIndex + 1} has media URL: ${lessonMediaUrl}`
           );
-          const videoUrl = lesson.videoUrl;
-          const sourceDestination = extractSourceDestination(videoUrl);
+          const sourceDestination = extractSourceDestination(lessonMediaUrl);
           if (sourceDestination) {
             console.log(
               `    - Extracted source destination: ${sourceDestination}`
@@ -765,17 +832,17 @@ exports.createCourse = async (req, res) => {
               sourceDestination,
               folderType: `section_${sectionIndex + 1}/lesson_${
                 lessonIndex + 1
-              }`, // Cấu trúc folder mới
+              }`, // new folder structure
               fileType: "lesson-video",
               lessonIndex: lessonVideoIndex,
               sectionIndex: sectionIndex,
               lessonIndexInSection: lessonIndex,
-              originalUrl: videoUrl,
+              originalUrl: lessonMediaUrl,
             });
             lessonVideoIndex++;
           } else {
             console.log(
-              `    - ❌ Could not extract source destination from URL`
+              `    - 4c Could not extract source destination from URL`
             );
           }
         }
@@ -875,36 +942,188 @@ exports.createCourse = async (req, res) => {
         } else if (lessonData.lectureNotes !== undefined) {
           notes = lessonData.lectureNotes;
         }
+        // Ensure type is set
+        let lessonType = lessonData.type || "video";
+
+        // Determine media URL: prefer materialUrl, fallback to legacy videoUrl
+        const mediaUrl = lessonData.materialUrl || lessonData.videoUrl || "";
+
+        // Auto-detect quiz lessons: check if lesson has quizId or quiz-related data
+        let finalQuizIds = [];
+
+        // Handle quiz data from frontend (parsed but not saved yet)
+        if (lessonData.quizData && typeof lessonData.quizData === "object") {
+          // Quiz data exists - extract quiz ID for lesson reference
+          const quizId = lessonData.quizData._id || lessonData.quizData.id;
+
+          if (quizId && quizId.toString().trim() !== "") {
+            console.log(
+              `� Found quiz ID for lesson: ${quizId} (${lessonData.quizData.title})`
+            );
+            if (!quizId.toString().startsWith("temp_")) {
+              finalQuizIds = [quizId];
+              lessonType = "quiz";
+            } else {
+              // Temporary ID - create real quiz from quiz data
+              try {
+                const { createQuizFromData } = require('./quizController');
+                
+                // Prepare quiz data for creation
+                const quizPayload = {
+                  title: lessonData.quizData.title,
+                  description: lessonData.quizData.description || '',
+                  questions: lessonData.quizData.questions || [],
+                  timeLimit: lessonData.quizData.timeLimit || null,
+                  passingScore: lessonData.quizData.passingScore || 70,
+                  maxAttempts: lessonData.quizData.maxAttempts || 3,
+                  randomizeQuestions: lessonData.quizData.randomizeQuestions || false,
+                  showCorrectAnswers: lessonData.quizData.showCorrectAnswers || true
+                };
+
+                // Check if we have questions data
+                if (!quizPayload.questions || quizPayload.questions.length === 0) {
+                  console.log(`⚠️ No questions found in quiz data. Skipping quiz creation.`);
+                  // Treat as regular lesson instead
+                  continue;
+                }
+
+                // Validate questions structure - check if questions are corrupted
+                const firstQuestion = quizPayload.questions[0];
+                let hasValidStructure = firstQuestion && 
+                                        firstQuestion.content && 
+                                        firstQuestion.answers && 
+                                        Array.isArray(firstQuestion.answers) && 
+                                        firstQuestion.answers.length > 0;
+
+                // Check if frontend sent data in different format (question/options instead of content/answers)
+                if (!hasValidStructure && firstQuestion) {
+                  // Map frontend format to backend format
+                  quizPayload.questions = quizPayload.questions.map(q => {
+                    if (q.question && q.options) {
+                      return {
+                        content: q.question,
+                        answers: (() => {
+                          let options = [];
+                          if (Array.isArray(q.options)) {
+                            options = q.options;
+                          } else if (q.options && typeof q.options === 'object') {
+                            // Convert object to array (handle {0: 'Apple', 1: 'Google'} format)
+                            options = Object.values(q.options);
+                          }
+                          
+                          return options.map((option, index) => ({
+                            content: option,  // Changed from 'text' to 'content'
+                            isCorrect: index === (q.correctAnswer || 0)
+                          }));
+                        })(),
+                        score: q.score || 1,
+                        type: 'multiple-choice'
+                      };
+                    }
+                    return q;
+                  });
+                  
+                  // Revalidate after mapping
+                  const mappedFirstQuestion = quizPayload.questions[0];
+                  hasValidStructure = mappedFirstQuestion && 
+                                    mappedFirstQuestion.content && 
+                                    mappedFirstQuestion.answers && 
+                                    Array.isArray(mappedFirstQuestion.answers) && 
+                                    mappedFirstQuestion.answers.length > 0;
+                }
+
+                if (!hasValidStructure) {
+                  console.log(`⚠️ Questions data corrupted - missing content or answers after mapping attempt. Skipping quiz creation.`);
+                  // Skip this corrupted quiz lesson
+                  continue;
+                }
+
+                // Create real quiz
+                quizPayload.userId = req.user?.id || req.userId || null;  // Add userId
+                quizPayload.roleCreated = 'instructor';  // Add role
+                const realQuiz = await createQuizFromData(quizPayload);
+                
+                // Use real quiz ID
+                finalQuizIds = [realQuiz._id];
+                lessonType = "quiz";
+              } catch (error) {
+                console.error(`❌ Failed to create quiz from temp data:`, error.message);
+                // Skip this lesson if quiz creation fails
+                continue;
+              }
+            }
+          } else {
+            // Skip this lesson or treat as regular lesson
+          }
+        }
+        // Handle existing quiz IDs
+        else if (
+          Array.isArray(lessonData.quizIds) &&
+          lessonData.quizIds.length > 0
+        ) {
+          finalQuizIds = lessonData.quizIds;
+          lessonType = "quiz"; // Force type to quiz if quizIds present
+        } else if (lessonData.quizId && lessonData.quizId.trim() !== "") {
+          // Handle single quizId (maybe frontend sends quizId instead of quizIds)
+          finalQuizIds = [lessonData.quizId];
+          lessonType = "quiz";
+        } else if (
+          lessonData.quiz &&
+          typeof lessonData.quiz === "object" &&
+          lessonData.quiz._id
+        ) {
+          // Handle quiz object with _id
+          finalQuizIds = [lessonData.quiz._id];
+          lessonType = "quiz";
+        } else if (
+          lessonData.quiz &&
+          typeof lessonData.quiz === "string" &&
+          lessonData.quiz.trim() !== ""
+        ) {
+          // Handle quiz as string ID
+          finalQuizIds = [lessonData.quiz];
+          lessonType = "quiz";
+        } else if (lessonType === "quiz") {
+          // If type is explicitly set to quiz but no quizIds, skip
+        }
+
+        // If lesson is a quiz, ensure quizIds is present and non-empty
+        if (lessonType === "quiz") {
+          if (finalQuizIds.length === 0) {
+            // Skip invalid quiz lesson
+            console.log(
+              "❌ Skipping quiz lesson without valid quizIds:",
+              lessonData.title
+            );
+            continue;
+          }
+        }
+
+        const lessonPayload = {
+          courseId: savedCourse._id,
+          sectionId: savedSection._id,
+          title: lessonData.title,
+          description: lessonData.description || "",
+          lessonNotes: notes,
+          materialUrl: mediaUrl,
+          duration: lessonData.duration || 0,
+          order: lessonData.order || 0,
+          type: lessonType,
+          quizIds: finalQuizIds,
+        };
+
         let lesson;
         if (lessonData._id) {
           // Update existing lesson
           lesson = await Lesson.findOneAndUpdate(
             { _id: lessonData._id, sectionId: savedSection._id },
-            {
-              title: lessonData.title,
-              description: lessonData.description || "",
-              lessonNotes: notes,
-              videoUrl: lessonData.videoUrl || "",
-              captions: lessonData.captions || "",
-              duration: lessonData.duration || 0,
-              order: lessonData.order || 0,
-            },
+            lessonPayload,
             { new: true, runValidators: true }
           );
           if (!lesson) continue;
         } else {
           // Create new lesson
-          lesson = new Lesson({
-            courseId: savedCourse._id,
-            sectionId: savedSection._id,
-            title: lessonData.title,
-            description: lessonData.description || "",
-            lessonNotes: notes,
-            videoUrl: lessonData.videoUrl || "",
-            captions: lessonData.captions || "",
-            duration: lessonData.duration || 0,
-            order: lessonData.order || 0,
-          });
+          lesson = new Lesson(lessonPayload);
           await lesson.save();
         }
         createdLessonIds.push(lesson._id);
@@ -957,12 +1176,16 @@ exports.getCourseById = async (req, res) => {
         populate: {
           path: "lessons",
           select:
-            "title description lessonNotes videoUrl captions duration order createdAt updatedAt",
+            "title description lessonNotes materialUrl duration type quizIds order createdAt updatedAt",
+          populate: {
+            path: "quizIds",
+            select:
+              "_id title description questions roleCreated userId createdAt updatedAt",
+          },
         },
       })
       .populate("categoryIds", "name")
-      .populate("discountId", "discountCode value type status")
-      .populate("studentsEnrolled", "firstName lastName email");
+      .populate("discountId", "discountCode value type status");
 
     if (!course) {
       return res.status(404).json({
@@ -976,8 +1199,80 @@ exports.getCourseById = async (req, res) => {
       courseId: courseId,
     });
 
+    // Transform course data for frontend editing
+    const courseObj = course.toObject();
+
+    // Transform lesson data for frontend compatibility
+    if (courseObj.sections) {
+      courseObj.sections = courseObj.sections.map((section) => ({
+        ...section,
+        lessons: section.lessons.map((lesson) => {
+          const baseLesson = { ...lesson };
+
+          // Transform based on lesson type
+          switch (lesson.type) {
+            case "quiz":
+              // Transform quiz data for frontend editing
+              if (lesson.quizIds && lesson.quizIds.length > 0) {
+                const quiz = lesson.quizIds[0]; // Take first quiz
+                baseLesson.quizData = quiz
+                  ? {
+                      title: quiz.title,
+                      description: quiz.description,
+                      questions: quiz.questions,
+                      roleCreated: quiz.roleCreated,
+                      userId: quiz.userId,
+                    }
+                  : null;
+              }
+              break;
+
+            case "video":
+              // Ensure video URL is available for frontend
+              baseLesson.videoUrl = lesson.materialUrl || lesson.videoUrl;
+
+              // Add file information for video editing
+              if (baseLesson.videoUrl) {
+                const fileName = extractFileNameFromUrl(baseLesson.videoUrl);
+                baseLesson.fileInfo = {
+                  type: "video",
+                  url: baseLesson.videoUrl,
+                  fileName: fileName,
+                  uploadedAt: lesson.createdAt,
+                  canDelete: true, // Indicates frontend can show delete option
+                };
+              }
+              break;
+
+            case "article":
+              // Ensure article content URL is available for frontend
+              baseLesson.articleUrl = lesson.materialUrl;
+
+              // Add file information for article editing
+              if (baseLesson.articleUrl) {
+                const fileName = extractFileNameFromUrl(baseLesson.articleUrl);
+                baseLesson.fileInfo = {
+                  type: "article",
+                  url: baseLesson.articleUrl,
+                  fileName: fileName,
+                  uploadedAt: lesson.createdAt,
+                  canDelete: true, // Indicates frontend can show delete option
+                };
+              }
+              break;
+
+            default:
+              // Keep as is for other types
+              break;
+          }
+
+          return baseLesson;
+        }),
+      }));
+    }
+
     const courseData = {
-      ...course.toObject(),
+      ...courseObj,
       enrollmentCount,
     };
 
@@ -1090,35 +1385,129 @@ exports.updateCourse = async (req, res) => {
         } else if (lessonData.lectureNotes !== undefined) {
           notes = lessonData.lectureNotes;
         }
+        // Normalize lesson fields similar to createCourse logic
+        let lessonType = lessonData.type || "video";
+        const mediaUrl = lessonData.materialUrl || lessonData.videoUrl || "";
+
+        // Auto-detect quiz lessons: check if lesson has quizId or quiz-related data
+        let finalQuizIds = [];
+
+        // Handle quiz data from frontend (parsed but not saved yet)
+        if (lessonData.quizData && typeof lessonData.quizData === "object") {
+          // Quiz data exists - extract quiz ID for lesson reference
+          const quizId = lessonData.quizData._id || lessonData.quizData.id;
+
+          if (quizId && quizId.toString().trim() !== "") {
+            console.log(
+              `� Update: Found quiz ID for lesson: ${quizId} (${lessonData.quizData.title})`
+            );
+            if (!quizId.toString().startsWith("temp_")) {
+              // Real quiz ID - use directly
+              finalQuizIds = [quizId];
+              lessonType = "quiz";
+            } else {
+              // Temporary ID - create real quiz from quiz data
+              try {
+                const { createQuizFromData } = require('./quizController');
+                
+                // Prepare quiz data for creation
+                const quizPayload = {
+                  title: lessonData.quizData.title,
+                  description: lessonData.quizData.description || '',
+                  questions: lessonData.quizData.questions || [],
+                  timeLimit: lessonData.quizData.timeLimit || null,
+                  passingScore: lessonData.quizData.passingScore || 70,
+                  maxAttempts: lessonData.quizData.maxAttempts || 3,
+                  randomizeQuestions: lessonData.quizData.randomizeQuestions || false,
+                  showCorrectAnswers: lessonData.quizData.showCorrectAnswers || true
+                };
+
+                // Create real quiz
+                const realQuiz = await createQuizFromData(quizPayload);
+                
+                // Use real quiz ID
+                finalQuizIds = [realQuiz._id];
+                lessonType = "quiz";
+              } catch (error) {
+                console.error(`❌ Update: Failed to create quiz from temp data:`, error.message);
+                // Skip this lesson if quiz creation fails
+                continue;
+              }
+            }
+          } else {
+            // Skip this lesson or treat as regular lesson
+          }
+        }
+        // Handle existing quiz IDs
+        else if (
+          Array.isArray(lessonData.quizIds) &&
+          lessonData.quizIds.length > 0
+        ) {
+          finalQuizIds = lessonData.quizIds;
+          lessonType = "quiz"; // Force type to quiz if quizIds present
+        } else if (lessonData.quizId && lessonData.quizId.trim() !== "") {
+          // Handle single quizId (maybe frontend sends quizId instead of quizIds)
+          finalQuizIds = [lessonData.quizId];
+          lessonType = "quiz";
+        } else if (
+          lessonData.quiz &&
+          typeof lessonData.quiz === "object" &&
+          lessonData.quiz._id
+        ) {
+          // Handle quiz object with _id
+          finalQuizIds = [lessonData.quiz._id];
+          lessonType = "quiz";
+        } else if (
+          lessonData.quiz &&
+          typeof lessonData.quiz === "string" &&
+          lessonData.quiz.trim() !== ""
+        ) {
+          // Handle quiz as string ID
+          finalQuizIds = [lessonData.quiz];
+          lessonType = "quiz";
+        } else if (lessonType === "quiz") {
+          // If type is explicitly set to quiz but no quizIds, log warning
+          console.log(
+            "⚠️ Update: Lesson marked as quiz but no quizIds found:",
+            lessonData.title
+          );
+        }
+
+        if (lessonType === "quiz") {
+          if (finalQuizIds.length === 0) {
+            // Skip invalid quiz lesson
+            console.log(
+              "❌ Update: Skipping quiz lesson without valid quizIds:",
+              lessonData.title
+            );
+            continue;
+          }
+        }
+
+        const lessonPayload = {
+          title: lessonData.title,
+          description: lessonData.description || "",
+          lessonNotes: notes,
+          materialUrl: mediaUrl,
+          duration: lessonData.duration || 0,
+          order: lessonData.order || 0,
+          type: lessonType,
+          quizIds: finalQuizIds,
+        };
+
         let lesson;
         if (lessonData._id) {
-          // Update existing lesson
           lesson = await Lesson.findOneAndUpdate(
             { _id: lessonData._id, sectionId: section._id },
-            {
-              title: lessonData.title,
-              description: lessonData.description || "",
-              lessonNotes: notes,
-              videoUrl: lessonData.videoUrl || "",
-              captions: lessonData.captions || "",
-              duration: lessonData.duration || 0,
-              order: lessonData.order || 0,
-            },
+            lessonPayload,
             { new: true, runValidators: true }
           );
           if (!lesson) continue;
         } else {
-          // Create new lesson
           lesson = new Lesson({
             courseId,
             sectionId: section._id,
-            title: lessonData.title,
-            description: lessonData.description || "",
-            lessonNotes: notes,
-            videoUrl: lessonData.videoUrl || "",
-            captions: lessonData.captions || "",
-            duration: lessonData.duration || 0,
-            order: lessonData.order || 0,
+            ...lessonPayload,
           });
           await lesson.save();
         }
@@ -1159,12 +1548,11 @@ exports.updateCourse = async (req, res) => {
         populate: {
           path: "lessons",
           select:
-            "title description lessonNotes videoUrl captions duration order",
+            "title description lessonNotes materialUrl duration type quizIds order",
         },
       })
       .populate("categoryIds", "name")
-      .populate("discountId", "discountCode value type")
-      .populate("studentsEnrolled", "firstName lastName email");
+      .populate("discountId", "discountCode value type");
 
     res.status(200).json({
       success: true,
@@ -1305,7 +1693,7 @@ exports.getCourseSections = async (req, res) => {
       .populate({
         path: "lessons",
         select:
-          "title description lessonNotes videoUrl captions duration order",
+          "title description lessonNotes materialUrl duration type quizIds order",
         options: { sort: { order: 1 } },
       })
       .sort({ order: 1 });
@@ -1363,7 +1751,7 @@ exports.updateSection = async (req, res) => {
       { new: true, runValidators: true }
     ).populate({
       path: "lessons",
-      select: "title content videoUrl duration order",
+      select: "title description materialUrl duration type quizIds order",
       options: { sort: { order: 1 } },
     });
 
@@ -1452,10 +1840,11 @@ exports.createLesson = async (req, res) => {
       title,
       description,
       lessonNotes,
-      videoUrl,
-      captions,
+      materialUrl,
       duration,
       order,
+      type,
+      quizIds,
     } = req.body;
 
     // Validate required fields
@@ -1484,6 +1873,23 @@ exports.createLesson = async (req, res) => {
       });
     }
 
+    // Determine media URL and lesson type
+    const mediaUrl = materialUrl || videoUrl || "";
+    const lessonType =
+      type || (Array.isArray(quizIds) && quizIds.length > 0 ? "quiz" : "video");
+
+    if (
+      lessonType === "quiz" &&
+      (!Array.isArray(quizIds) || quizIds.length === 0)
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "quizIds are required for quiz lessons",
+        });
+    }
+
     // Create new lesson
     const newLesson = new Lesson({
       courseId,
@@ -1491,10 +1897,11 @@ exports.createLesson = async (req, res) => {
       title: title.trim(),
       description: description || "",
       lessonNotes: lessonNotes || "",
-      videoUrl: videoUrl || "",
-      captions: captions || "",
+      materialUrl: mediaUrl,
       duration: duration || 0,
       order: order || 0,
+      type: lessonType,
+      quizIds: Array.isArray(quizIds) ? quizIds : [],
     });
 
     const savedLesson = await newLesson.save();
@@ -1530,10 +1937,11 @@ exports.updateLesson = async (req, res) => {
       title,
       description,
       lessonNotes,
-      videoUrl,
-      captions,
+      materialUrl,
       duration,
       order,
+      type,
+      quizIds,
     } = req.body;
 
     // Check if course exists
@@ -1555,14 +1963,34 @@ exports.updateLesson = async (req, res) => {
     }
 
     // Update lesson
+    const mediaUrl = materialUrl || videoUrl;
+    const lessonType = type;
+
+    // If updating to quiz type, ensure quizIds provided
+    if (
+      lessonType === "quiz" &&
+      (!Array.isArray(quizIds) || quizIds.length === 0)
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "quizIds are required for quiz lessons",
+        });
+    }
+
     const updateData = {};
     if (title !== undefined) updateData.title = title.trim();
     if (description !== undefined) updateData.description = description;
     if (lessonNotes !== undefined) updateData.lessonNotes = lessonNotes;
-    if (videoUrl !== undefined) updateData.videoUrl = videoUrl;
-    if (captions !== undefined) updateData.captions = captions;
+    if (mediaUrl !== undefined) {
+      updateData.materialUrl = mediaUrl;
+    }
     if (duration !== undefined) updateData.duration = duration;
     if (order !== undefined) updateData.order = order;
+    if (lessonType !== undefined) updateData.type = lessonType;
+    if (quizIds !== undefined)
+      updateData.quizIds = Array.isArray(quizIds) ? quizIds : [];
 
     const updatedLesson = await Lesson.findByIdAndUpdate(lessonId, updateData, {
       new: true,
@@ -1690,12 +2118,14 @@ exports.getLesson = async (req, res) => {
 exports.moveLessonVideo = async (req, res) => {
   try {
     const { courseId, lessonId } = req.params;
-    const { videoUrl } = req.body;
+    // support both legacy videoUrl and new materialUrl in request body
+    const { videoUrl, materialUrl } = req.body;
+    const inputUrl = videoUrl || materialUrl;
 
-    if (!videoUrl) {
+    if (!inputUrl) {
       return res.status(400).json({
         success: false,
-        message: "Video URL is required",
+        message: "Video or material URL is required",
       });
     }
 
@@ -1733,8 +2163,10 @@ exports.moveLessonVideo = async (req, res) => {
       "section-data"
     );
 
-    // Update lesson with new video URL
-    lesson.videoUrl = moveResult.newUrl;
+    // Update lesson with new material URL
+    lesson.materialUrl = moveResult.newUrl;
+    // Ensure lesson.type is video
+    lesson.type = lesson.type || "video";
     await lesson.save();
 
     res.status(200).json({
@@ -1974,6 +2406,183 @@ exports.getAllCategories = async (req, res) => {
       data: categories,
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Delete lesson file (video/article) and update lesson
+ * @route   DELETE /api/admin/lessons/:lessonId/file
+ * @access  Private (Admin only)
+ */
+exports.deleteLessonFile = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+
+    // Find the lesson
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+      });
+    }
+
+    // Check if lesson has a file to delete
+    if (!lesson.materialUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "Lesson does not have any file to delete",
+      });
+    }
+
+    // Extract file path from Firebase URL for deletion
+    const fileUrl = lesson.materialUrl;
+    let deletionSuccess = false;
+
+    try {
+      // Attempt to delete file from Firebase Storage
+      if (fileUrl.includes("firebasestorage.googleapis.com")) {
+        // Extract file path from Firebase URL
+        const bucket = admin.storage().bucket();
+        const decodedUrl = decodeURIComponent(fileUrl);
+
+        // Extract the file path from Firebase storage URL
+        const pathMatch = decodedUrl.match(/\/o\/(.+?)\?/);
+        if (pathMatch && pathMatch[1]) {
+          const filePath = decodeURIComponent(pathMatch[1]);
+          const file = bucket.file(filePath);
+
+          // Check if file exists before deleting
+          const [exists] = await file.exists();
+          if (exists) {
+            await file.delete();
+            deletionSuccess = true;
+            console.log(`✅ Successfully deleted file: ${filePath}`);
+          } else {
+            console.log(`ℹ️ File not found in storage: ${filePath}`);
+            deletionSuccess = true; // Consider as success since file doesn't exist
+          }
+        }
+      }
+    } catch (fileError) {
+      console.error("❌ Error deleting file from storage:", fileError);
+      // Continue anyway to update the lesson record
+    }
+
+    // Update lesson to remove materialUrl
+    lesson.materialUrl = "";
+    await lesson.save();
+
+    res.status(200).json({
+      success: true,
+      message: deletionSuccess
+        ? "File deleted successfully and lesson updated"
+        : "Lesson updated (file may not have been deleted from storage)",
+      data: {
+        lessonId: lesson._id,
+        title: lesson.title,
+        materialUrl: lesson.materialUrl,
+        fileDeleted: deletionSuccess,
+      },
+    });
+  } catch (error) {
+    console.error("Error in deleteLessonFile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Update lesson file (video/article) with new uploaded file
+ * @route   PUT /api/admin/lessons/:lessonId/file
+ * @access  Private (Admin only)
+ */
+exports.updateLessonFile = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+    const { fileUrl, fileName, fileType } = req.body;
+
+    // Validate required fields
+    if (!fileUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "File URL is required",
+      });
+    }
+
+    // Find the lesson
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+      });
+    }
+
+    // Store old file URL for deletion
+    const oldFileUrl = lesson.materialUrl;
+
+    // Update lesson with new file URL
+    lesson.materialUrl = fileUrl;
+    await lesson.save();
+
+    // Delete old file if it exists
+    let oldFileDeleted = false;
+    if (oldFileUrl && oldFileUrl !== fileUrl) {
+      try {
+        if (oldFileUrl.includes("firebasestorage.googleapis.com")) {
+          const bucket = admin.storage().bucket();
+          const decodedUrl = decodeURIComponent(oldFileUrl);
+
+          const pathMatch = decodedUrl.match(/\/o\/(.+?)\?/);
+          if (pathMatch && pathMatch[1]) {
+            const filePath = decodeURIComponent(pathMatch[1]);
+            const file = bucket.file(filePath);
+
+            const [exists] = await file.exists();
+            if (exists) {
+              await file.delete();
+              oldFileDeleted = true;
+              console.log(`✅ Successfully deleted old file: ${filePath}`);
+            }
+          }
+        }
+      } catch (fileError) {
+        console.error("❌ Error deleting old file from storage:", fileError);
+      }
+    }
+
+    // Return updated lesson with file info
+    const fileName_extracted = extractFileNameFromUrl(fileUrl);
+
+    res.status(200).json({
+      success: true,
+      message: "Lesson file updated successfully",
+      data: {
+        lessonId: lesson._id,
+        title: lesson.title,
+        type: lesson.type,
+        materialUrl: lesson.materialUrl,
+        fileInfo: {
+          type: fileType || lesson.type,
+          url: fileUrl,
+          fileName: fileName || fileName_extracted,
+          uploadedAt: new Date(),
+          canDelete: true,
+        },
+        oldFileDeleted,
+      },
+    });
+  } catch (error) {
+    console.error("Error in updateLessonFile:", error);
     res.status(500).json({
       success: false,
       message: "Server error",

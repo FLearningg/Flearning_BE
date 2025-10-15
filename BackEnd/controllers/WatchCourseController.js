@@ -87,8 +87,12 @@ exports.getAllLessonsOfCourse = async (req, res) => {
       .populate({
         path: "lessons",
         select:
-          "_id title description lessonNotes videoUrl captions duration order createdAt updatedAt",
+          "_id title description lessonNotes materialUrl videoUrl captions duration order type quizIds createdAt updatedAt",
         options: { sort: { order: 1 } },
+        populate: {
+          path: "quizIds",
+          select: "_id title description questions"
+        }
       });
     res.status(200).json({ sections });
   } catch (err) {

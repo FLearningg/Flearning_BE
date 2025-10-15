@@ -38,6 +38,7 @@ const detectFolderType = (fieldname, mimetype, originalname, fileType) => {
       material: "section-data",
       sectiondata: "section-data",
       "section-data": "section-data",
+
     };
 
     const detectedType = fileTypeMap[fileType.toLowerCase()];
@@ -98,6 +99,7 @@ const detectFromFieldName = (fieldname) => {
     case "material":
     case "file": // Common field name, check other factors
       return "section-data";
+
     default:
       return "general";
   }
