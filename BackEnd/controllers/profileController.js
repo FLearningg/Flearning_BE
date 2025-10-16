@@ -2,6 +2,7 @@ const User = require("../models/userModel");
 const Course = require("../models/courseModel");
 const Payment = require("../models/paymentModel");
 const Transaction = require("../models/transactionModel");
+const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 const {
   uploadUserAvatar,
@@ -249,18 +250,15 @@ const getEnrolledCourses = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // BƯỚC 1: Thay đổi truy vấn từ User.findById sang Enrollment.find
     // Tìm tất cả các bản ghi ghi danh của người dùng có trạng thái là "enrolled"
     const enrollments = await Enrollment.find({
       userId: userId,
       status: "enrolled",
     }).populate({
-      // BƯỚC 2: Populate thông tin chi tiết của khóa học từ trường 'courseId'
       path: "courseId",
       select:
         "title subTitle thumbnail price rating level duration language categoryIds createdAt instructor",
       populate: {
-        // Đây là nested populate để lấy thông tin category
         path: "categoryIds",
         model: "Category",
         select: "name",
@@ -276,17 +274,19 @@ const getEnrolledCourses = async (req, res) => {
       });
     }
 
-    // BƯỚC 3: Trích xuất và định dạng lại dữ liệu từ kết quả enrollments
-    // Dữ liệu khóa học bây giờ nằm trong enrollment.courseId
+    // Trích xuất và định dạng lại dữ liệu từ kết quả enrollments
     const enrolledCoursesData = enrollments
       .map((enrollment) => {
-        // Kiểm tra để đảm bảo courseId không bị null (do lỗi dữ liệu)
+        // Kiểm tra để đảm bảo courseId không bị null
         if (!enrollment.courseId) {
           return null;
         }
-        const course = enrollment.courseId; // Lấy object course đã được populate
+        const course = enrollment.courseId;
 
         return {
+          enrollmentId: enrollment._id,
+          enrolledAt: enrollment.createdAt,
+          status: enrollment.status,
           course: {
             id: course._id,
             title: course.title,
@@ -306,7 +306,7 @@ const getEnrolledCourses = async (req, res) => {
           },
         };
       })
-      .filter((item) => item !== null); // Lọc bỏ các kết quả null nếu có
+      .filter((item) => item !== null);
 
     res.status(200).json({
       success: true,

@@ -1,7 +1,9 @@
 const Quiz = require("../models/QuizModel");
+const StudentQuizResult = require("../models/StudentQuizResult");
 const Course = require("../models/courseModel");
 const Lesson = require("../models/lessonModel");
 const Section = require("../models/sectionModel");
+const mongoose = require("mongoose");
 const mammoth = require("mammoth");
 const multer = require("multer");
 const { uploadToFirebase: uploadToFirebaseStorage } = require("../utils/firebaseStorage");
@@ -503,6 +505,335 @@ exports.getQuizById = async (req, res) => {
     
   } catch (error) {
     console.error("Error in getQuizById:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get quiz by lesson ID
+ * @route   GET /api/quiz/by-lesson/:lessonId
+ * @access  Private
+ */
+exports.getQuizByLesson = async (req, res) => {
+  try {
+    let { lessonId } = req.params;
+    const originalParam = lessonId;
+
+    // Handle frontend format with 'quiz_' prefix
+    if (lessonId.startsWith('quiz_')) {
+      lessonId = lessonId.replace('quiz_', '');
+    }
+
+    // Validate lessonId
+    if (!mongoose.Types.ObjectId.isValid(lessonId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Lesson ID format",
+        debug: {
+          received: originalParam,
+          cleaned: lessonId,
+          isValid: false
+        }
+      });
+    }
+
+    // Find lesson first
+    const lesson = await Lesson.findById(lessonId);
+
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+        debug: {
+          originalParam: originalParam,
+          searchedLessonId: lessonId
+        }
+      });
+    }
+
+    // Check if it's a quiz lesson
+    if (lesson.type !== "quiz") {
+      return res.status(200).json({
+        success: false,
+        message: "This lesson is not a quiz lesson",
+        isQuizLesson: false,
+        data: {
+          lessonInfo: {
+            id: lesson._id,
+            title: lesson.title,
+            description: lesson.description,
+            type: lesson.type,
+            order: lesson.order,
+            materialUrl: lesson.materialUrl,
+            duration: lesson.duration
+          },
+          allowRetake: true // Added flag to indicate retake is allowed for non-quiz lessons as well
+        }
+      });
+    }
+
+    // Check if lesson has quizIds
+    if (!lesson.quizIds || lesson.quizIds.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No quiz found in this lesson",
+        data: {
+          lessonTitle: lesson.title,
+          lessonType: lesson.type,
+          allowRetake: true // Added flag to indicate retake is allowed even if no quizzes are found
+        }
+      });
+    }
+
+    const firstQuizId = lesson.quizIds[0];
+
+    // Get the first quiz (assuming one quiz per lesson for now)
+    const quiz = await Quiz.findById(firstQuizId)
+      .populate("courseId", "title")
+      .populate("userId", "firstName lastName");
+
+    if (!quiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz data not found",
+        debug: {
+          lessonQuizIds: lesson.quizIds,
+          searchedQuizId: firstQuizId
+        },
+        allowRetake: true // Added flag to indicate retake is allowed even if quiz data is not found
+      });
+    }
+
+    // Allow users to retake the quiz
+    res.status(200).json({
+      success: true,
+      data: {
+        ...quiz.toObject(),
+        lessonInfo: {
+          id: lesson._id,
+          title: lesson.title,
+          description: lesson.description,
+          type: lesson.type,
+          order: lesson.order
+        },
+        allowRetake: true // Added flag to indicate retake is allowed for all quizzes
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Error in getQuizByLesson:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+      stack: error.stack
+    });
+  }
+};
+
+/**
+ * @desc    Get lesson detail with type-specific data (video/article/quiz)
+ * @route   GET /api/quiz/lesson/:lessonId
+ * @access  Private
+ */
+exports.getLessonDetail = async (req, res) => {
+  try {
+    let { lessonId } = req.params;
+    const originalParam = lessonId;
+    
+    // Handle frontend format with 'quiz_' prefix
+    if (lessonId.startsWith('quiz_')) {
+      lessonId = lessonId.replace('quiz_', '');
+    }
+    
+    // Validate lessonId
+    if (!mongoose.Types.ObjectId.isValid(lessonId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Lesson ID format",
+        debug: {
+          received: originalParam,
+          cleaned: lessonId,
+          isValid: false
+        }
+      });
+    }
+    
+    // Find lesson first
+    const lesson = await Lesson.findById(lessonId)
+      .populate('courseId', 'title')
+      .populate('sectionId', 'name order');
+    
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+        debug: {
+          originalParam: originalParam,
+          searchedLessonId: lessonId
+        }
+      });
+    }
+    
+    // Base lesson info
+    const baseResponse = {
+      success: true,
+      data: {
+        lessonInfo: {
+          id: lesson._id,
+          title: lesson.title,
+          description: lesson.description,
+          lessonNotes: lesson.lessonNotes,
+          type: lesson.type,
+          order: lesson.order,
+          duration: lesson.duration,
+          courseId: lesson.courseId,
+          sectionId: lesson.sectionId,
+          createdAt: lesson.createdAt,
+          updatedAt: lesson.updatedAt
+        }
+      }
+    };
+    
+    // Handle different lesson types
+    switch (lesson.type) {
+      case 'video':
+        baseResponse.data.videoData = {
+          materialUrl: lesson.materialUrl, // Video URL
+          duration: lesson.duration,
+          hasVideo: !!lesson.materialUrl
+        };
+        break;
+        
+      case 'article':
+        baseResponse.data.articleData = {
+          content: lesson.description || lesson.lessonNotes, // Article content
+          materialUrl: lesson.materialUrl, // Optional resource URL
+          hasContent: !!(lesson.description || lesson.lessonNotes)
+        };
+        break;
+        
+      case 'quiz':
+        // Check if lesson has quizIds
+        if (!lesson.quizIds || lesson.quizIds.length === 0) {
+          baseResponse.data.quizData = {
+            hasQuiz: false,
+            message: "No quiz found in this lesson",
+            quizIds: []
+          };
+        } else {
+          // Get quiz data with questions and answers
+          const quizzes = await Quiz.find({ 
+            _id: { $in: lesson.quizIds }
+          })
+          .populate("courseId", "title")
+          .populate("userId", "firstName lastName")
+          .sort({ createdAt: -1 });
+          
+          if (quizzes.length === 0) {
+            baseResponse.data.quizData = {
+              hasQuiz: false,
+              message: "Quiz documents not found",
+              quizIds: lesson.quizIds
+            };
+          } else {
+            baseResponse.data.quizData = {
+              hasQuiz: true,
+              quizzes: quizzes
+            };
+          }
+        }
+        break;
+    }
+    
+    res.status(200).json(baseResponse);
+    
+  } catch (error) {
+    console.error("❌ Error in getLessonDetail:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+      stack: error.stack
+    });
+  }
+};
+
+/**
+ * @desc    Get all quizzes in a lesson
+ * @route   GET /api/quiz/lesson/:lessonId/all
+ * @access  Private
+ */
+exports.getQuizzesInLesson = async (req, res) => {
+  try {
+    let { lessonId } = req.params;
+    
+    // Handle frontend format with 'quiz_' prefix
+    if (lessonId.startsWith('quiz_')) {
+      lessonId = lessonId.replace('quiz_', '');
+      console.log(`🔄 Cleaned lessonId from quiz_${lessonId} to ${lessonId}`);
+    }
+    
+    // Validate lessonId
+    if (!mongoose.Types.ObjectId.isValid(lessonId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Lesson ID format",
+        debug: {
+          received: req.params.lessonId,
+          cleaned: lessonId,
+          isValid: false
+        }
+      });
+    }
+    
+    // Check if lesson exists and get its quizIds
+    const lesson = await Lesson.findById(lessonId);
+    if (!lesson) {
+      return res.status(404).json({
+        success: false,
+        message: "Lesson not found",
+        debug: {
+          originalParam: req.params.lessonId,
+          searchedLessonId: lessonId
+        }
+      });
+    }
+    
+    if (lesson.type !== "quiz" || !lesson.quizIds || lesson.quizIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "This lesson has no quizzes",
+        data: [],
+        count: 0
+      });
+    }
+    
+    // Find all quizzes for this lesson
+    const quizzes = await Quiz.find({ 
+      _id: { $in: lesson.quizIds }
+    })
+    .populate("courseId", "title")
+    .populate("userId", "firstName lastName")
+    .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      data: quizzes,
+      count: quizzes.length,
+      lessonInfo: {
+        id: lesson._id,
+        title: lesson.title,
+        type: lesson.type
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error in getQuizzesInLesson:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1404,6 +1735,329 @@ exports.createQuizFromFrontendData = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error while creating quiz",
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Submit quiz answers and calculate score
+ * @route   POST /api/quiz/:quizId/submit
+ * @access  Private (Student)
+ */
+exports.submitQuiz = async (req, res) => {
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  try {
+    const { quizId } = req.params;
+    const { answers } = req.body; // Array of { questionIndex: number, selectedAnswers: [indices] }
+    const userId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Quiz ID format"
+      });
+    }
+
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({
+        success: false,
+        message: "Answers must be an array"
+      });
+    }
+
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found"
+      });
+    }
+
+    if (!quiz.questions || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Quiz has no questions",
+        debug: {
+          hasQuestions: !!quiz.questions,
+          isArray: Array.isArray(quiz.questions),
+          length: quiz.questions?.length || 0
+        }
+      });
+    }
+
+    let existingResult = await StudentQuizResult.findOne({
+      userId: userId,
+      quizId: quizId
+    });
+
+    let totalQuestions = quiz.questions.length;
+    let correctAnswers = 0;
+    let questionResults = [];
+
+    for (let i = 0; i < answers.length; i++) {
+      const userAnswer = answers[i];
+      const questionIndex = userAnswer.questionIndex;
+      const selectedAnswers = userAnswer.selectedAnswers || [];
+
+      // Validate question index
+      if (questionIndex < 0 || questionIndex >= totalQuestions) {
+        continue;
+      }
+
+      const question = quiz.questions[questionIndex];
+
+      // Check if question has answers array
+      if (!question.answers || !Array.isArray(question.answers)) {
+        questionResults.push({
+          questionIndex: questionIndex,
+          questionContent: question.content || "No content",
+          userAnswers: selectedAnswers.map(index => ({ index, content: "Invalid answer structure" })),
+          correctAnswers: [],
+          isCorrect: false,
+          error: "Question has no answers array"
+        });
+        continue;
+      }
+      
+      const correctAnswerIndices = question.answers.reduce((indices, answer, index) => {
+        if (answer && answer.isCorrect) indices.push(index);
+        return indices;
+      }, []);
+
+      const isCorrect = 
+        selectedAnswers.length === correctAnswerIndices.length &&
+        selectedAnswers.every(index => correctAnswerIndices.includes(index)) &&
+        correctAnswerIndices.every(index => selectedAnswers.includes(index));
+
+      if (isCorrect) correctAnswers++;
+
+      questionResults.push({
+        questionIndex: questionIndex,
+        questionContent: question.content || "No content",
+        userAnswers: selectedAnswers.map(index => ({
+          index: index,
+          content: question.answers && question.answers[index] ? question.answers[index].content : "Invalid answer"
+        })),
+        correctAnswers: correctAnswerIndices.map(index => ({
+          index: index,
+          content: question.answers && question.answers[index] ? question.answers[index].content : "Invalid answer"
+        })),
+        isCorrect: isCorrect
+      });
+    }
+    
+    // Calculate percentage score
+    const scorePercentage = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
+    const passed = scorePercentage >= 80;
+    
+    if (existingResult) {
+      // Update existing result
+      existingResult.score = scorePercentage;
+      existingResult.takenAt = new Date();
+      existingResult.details = {
+        totalQuestions: totalQuestions,
+        correctAnswers: correctAnswers,
+        scorePercentage: scorePercentage,
+        passed: passed,
+        questionResults: questionResults
+      };
+
+      await existingResult.save();
+
+      return res.status(200).json({
+        success: true,
+        message: `Quiz retaken successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`,
+        data: {
+          resultId: existingResult._id,
+          quizId: quizId,
+          score: scorePercentage,
+          totalQuestions: totalQuestions,
+          correctAnswers: correctAnswers,
+          passed: passed,
+          passingScore: 80,
+          takenAt: existingResult.takenAt,
+          questionResults: questionResults
+        }
+      });
+    } else {
+      // Save new result
+      const quizResult = new StudentQuizResult({
+        userId: userId,
+        quizId: quizId,
+        score: scorePercentage,
+        takenAt: new Date(),
+        details: {
+          totalQuestions: totalQuestions,
+          correctAnswers: correctAnswers,
+          scorePercentage: scorePercentage,
+          passed: passed,
+          questionResults: questionResults
+        }
+      });
+
+      const savedResult = await quizResult.save();
+
+      res.status(201).json({
+        success: true,
+        message: `Quiz submitted successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`,
+        data: {
+          resultId: savedResult._id,
+          quizId: quizId,
+          score: scorePercentage,
+          totalQuestions: totalQuestions,
+          correctAnswers: correctAnswers,
+          passed: passed,
+          passingScore: 80,
+          takenAt: savedResult.takenAt,
+          questionResults: questionResults
+        }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "An error occurred while submitting the quiz",
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get quiz result for a specific quiz submission
+ * @route   GET /api/quiz/:quizId/result
+ * @access  Private (Student)
+ */
+exports.getQuizResult = async (req, res) => {
+  try {
+    const { quizId } = req.params;
+    const userId = req.user.id;
+    
+    // Validate quizId
+    if (!mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Quiz ID format"
+      });
+    }
+    
+    // Get quiz result
+    const result = await StudentQuizResult.findOne({
+      userId: userId,
+      quizId: quizId
+    }).populate('quizId', 'title description')
+      .populate('userId', 'firstName lastName');
+    
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz result not found. You haven't submitted this quiz yet."
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        resultId: result._id,
+        quiz: result.quizId,
+        user: result.userId,
+        score: result.score,
+        passed: result.score >= 80,
+        passingScore: 80,
+        takenAt: result.takenAt,
+        details: result.details
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error in getQuizResult:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get quiz history for current user
+ * @route   GET /api/quiz/my-results
+ * @access  Private (Student)
+ */
+exports.getMyQuizHistory = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { page = 1, limit = 10, courseId } = req.query;
+    
+    // Build query
+    let query = { userId: userId };
+    if (courseId && mongoose.Types.ObjectId.isValid(courseId)) {
+      // First get all quizzes for the course
+      const courseQuizzes = await Quiz.find({ courseId: courseId }).select('_id');
+      const quizIds = courseQuizzes.map(quiz => quiz._id);
+      query.quizId = { $in: quizIds };
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    // Get results with pagination
+    const results = await StudentQuizResult.find(query)
+      .populate({
+        path: 'quizId',
+        select: 'title description courseId',
+        populate: {
+          path: 'courseId',
+          select: 'title'
+        }
+      })
+      .sort({ takenAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Get total count for pagination
+    const total = await StudentQuizResult.countDocuments(query);
+    
+    // Format results
+    const formattedResults = results.map(result => ({
+      resultId: result._id,
+      quiz: {
+        id: result.quizId._id,
+        title: result.quizId.title,
+        description: result.quizId.description,
+        course: result.quizId.courseId ? {
+          id: result.quizId.courseId._id,
+          title: result.quizId.courseId.title
+        } : null
+      },
+      score: result.score,
+      passed: result.score >= 80,
+      takenAt: result.takenAt,
+      summary: result.details ? {
+        totalQuestions: result.details.totalQuestions,
+        correctAnswers: result.details.correctAnswers
+      } : null
+    }));
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        results: formattedResults,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalResults: total,
+          hasNextPage: skip + results.length < total,
+          hasPrevPage: page > 1
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error in getMyQuizHistory:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
       error: error.message
     });
   }

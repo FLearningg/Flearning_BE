@@ -11,10 +11,23 @@ const mongoose = require("mongoose");
  */
 exports.getLessonDetail = async (req, res) => {
   try {
-    const { lessonId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(lessonId)) {
-      return res.status(400).json({ message: "Invalid lesson ID." });
+    let { lessonId } = req.params;
+    
+    // Handle frontend format with 'quiz_' prefix
+    if (lessonId.startsWith('quiz_')) {
+      lessonId = lessonId.replace('quiz_', '');
     }
+    
+    if (!mongoose.Types.ObjectId.isValid(lessonId)) {
+      return res.status(400).json({ 
+        message: "Invalid lesson ID.",
+        debug: {
+          received: req.params.lessonId,
+          cleaned: lessonId
+        }
+      });
+    }
+    
     const lesson = await Lesson.findById(lessonId);
     if (!lesson) {
       return res.status(404).json({ message: "Lesson not found." });
