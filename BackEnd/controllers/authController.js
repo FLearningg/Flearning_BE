@@ -1,5 +1,6 @@
 const User = require("../models/userModel");
 const Token = require("../models/tokenModel");
+const InstructorApplication = require("../models/instructorApplicationModel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -465,4 +466,113 @@ exports.resetPasswordWithCode = async (req, res) => {
         console.error("Error resetting password with code:", error);
         res.status(500).json({ message: "Server error" });
     }
+};
+
+/**
+ * @desc    Submit instructor registration application
+ * @route   POST /api/auth/instructor/register
+ * @access  Public
+ */
+exports.registerInstructor = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      bio,
+      expertise,
+      experience,
+      bankName,
+      accountNumber,
+      accountHolderName,
+      documents,
+    } = req.body;
+
+    // Validate required fields
+    if (
+      !firstName ||
+      !lastName ||
+      !email ||
+      !phone ||
+      !bio ||
+      !expertise ||
+      !experience ||
+      !bankName ||
+      !accountNumber ||
+      !accountHolderName
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Please provide all required fields." });
+    }
+
+    // Check if email already has a pending or approved application
+    const existingApplication = await InstructorApplication.findOne({
+      email,
+      status: { $in: ["pending", "approved"] },
+    });
+
+    if (existingApplication) {
+      if (existingApplication.status === "approved") {
+        return res.status(400).json({
+          message: "This email is already registered as an instructor.",
+        });
+      }
+      return res.status(400).json({
+        message:
+          "You already have a pending application. Please wait for admin review.",
+      });
+    }
+
+    // Create new instructor application
+    const newApplication = await InstructorApplication.create({
+      firstName,
+      lastName,
+      email,
+      phone,
+      bio,
+      expertise,
+      experience,
+      bankName,
+      accountNumber,
+      accountHolderName,
+      documents: documents || [],
+      status: "pending",
+    });
+
+    // Send confirmation email to applicant
+    const htmlMessage = `
+      <h2>Instructor Application Received</h2>
+      <p>Dear ${firstName} ${lastName},</p>
+      <p>Thank you for applying to become an instructor on our platform!</p>
+      <p>We have received your application and our team will review it shortly. You will receive an email notification once your application has been processed.</p>
+      <h3>Application Details:</h3>
+      <ul>
+        <li><strong>Email:</strong> ${email}</li>
+        <li><strong>Phone:</strong> ${phone}</li>
+        <li><strong>Expertise:</strong> ${expertise}</li>
+      </ul>
+      <p>If you have any questions, please don't hesitate to contact us.</p>
+      <p>Best regards,<br/>The F-Learning Team</p>
+    `;
+
+    await sendEmail(
+      email,
+      "Instructor Application Received - F-Learning",
+      htmlMessage
+    );
+
+    // Optionally: Send notification email to admin
+    // You can add admin notification here if needed
+
+    res.status(201).json({
+      message:
+        "Your instructor application has been submitted successfully! We will review it and get back to you soon.",
+      applicationId: newApplication._id,
+    });
+  } catch (error) {
+    console.error("Error in registerInstructor:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
