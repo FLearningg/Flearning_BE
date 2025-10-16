@@ -8,7 +8,7 @@ const InstructorApplicationSchema = new Schema(
     email: { type: String, required: true },
     phone: { type: String, required: true },
     bio: { type: String, required: true },
-    expertise: { type: String, required: true },
+    expertise: [{ type: String, required: true }], // Array of expertise areas
     experience: { type: String, required: true },
     bankName: { type: String, required: true },
     accountNumber: { type: String, required: true },
@@ -16,7 +16,7 @@ const InstructorApplicationSchema = new Schema(
     documents: [{ type: String }], // URLs to uploaded documents
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "emailNotVerified", "approved", "rejected"],
       default: "pending",
     },
     reviewedBy: { type: Schema.Types.ObjectId, ref: "User" },
