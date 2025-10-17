@@ -110,6 +110,26 @@ exports.verifyEmail = async (req, res) => {
 
     user.status = "verified";
     await user.save();
+    console.log("User status updated to verified for:", user.email);
+
+    // Update instructor application status if exists
+    const instructorApplication = await InstructorApplication.findOne({ 
+      email: user.email,
+      status: "emailNotVerified" 
+    });
+    
+    console.log("Looking for instructor application with email:", user.email);
+    console.log("Found instructor application:", instructorApplication ? "YES" : "NO");
+    
+    if (instructorApplication) {
+      console.log("Current application status:", instructorApplication.status);
+      instructorApplication.status = "pending";
+      await instructorApplication.save();
+      console.log("Updated instructor application status to pending for:", user.email);
+    } else {
+      console.log("No instructor application found with status 'emailNotVerified' for:", user.email);
+    }
+
     await tokenDocument.deleteOne();
 
     res.status(200).send("Email verified successfully.");
@@ -544,6 +564,11 @@ exports.registerInstructor = async (req, res) => {
 
     // Determine application status based on user's email verification
     const applicationStatus = user.status === "verified" ? "pending" : "emailNotVerified";
+    
+    console.log("Creating instructor application:");
+    console.log("- Email:", email);
+    console.log("- User status:", user.status);
+    console.log("- Application status will be:", applicationStatus);
 
     // Create new instructor application
     const newApplication = await InstructorApplication.create({
@@ -556,6 +581,8 @@ exports.registerInstructor = async (req, res) => {
       documents: documents || [],
       status: applicationStatus, // Set status based on email verification
     });
+    
+    console.log("Created application with ID:", newApplication._id, "and status:", newApplication.status);
 
     // Delete old verification tokens for this user
     await Token.deleteMany({ userId: user._id });
