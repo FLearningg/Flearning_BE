@@ -485,9 +485,6 @@ exports.registerInstructor = async (req, res) => {
       phone,
       expertise,
       experience,
-      bankName,
-      accountNumber,
-      accountHolderName,
       documents,
     } = req.body;
 
@@ -501,9 +498,6 @@ exports.registerInstructor = async (req, res) => {
       expertiseIsArray: Array.isArray(expertise),
       expertiseLength: expertise?.length,
       experience: experience?.substring(0, 50),
-      bankName,
-      accountNumber,
-      accountHolderName,
       documentsLength: documents?.length
     });
 
@@ -516,9 +510,6 @@ exports.registerInstructor = async (req, res) => {
     if (!expertise) missingFields.push('expertise (undefined/null)');
     if (Array.isArray(expertise) && expertise.length === 0) missingFields.push('expertise (empty array)');
     if (!experience) missingFields.push('experience');
-    if (!bankName) missingFields.push('bankName');
-    if (!accountNumber) missingFields.push('accountNumber');
-    if (!accountHolderName) missingFields.push('accountHolderName');
 
     if (missingFields.length > 0) {
       console.log("Missing/invalid fields:", missingFields);
@@ -562,9 +553,6 @@ exports.registerInstructor = async (req, res) => {
       phone,
       expertise,
       experience,
-      bankName,
-      accountNumber,
-      accountHolderName,
       documents: documents || [],
       status: applicationStatus, // Set status based on email verification
     });

@@ -9,9 +9,6 @@ const InstructorApplicationSchema = new Schema(
     phone: { type: String, required: true },
     expertise: [{ type: String, required: true }], // Array of expertise areas
     experience: { type: String, required: true },
-    bankName: { type: String, required: true },
-    accountNumber: { type: String, required: true },
-    accountHolderName: { type: String, required: true },
     documents: [{ type: String }], // URLs to uploaded documents
     status: {
       type: String,
