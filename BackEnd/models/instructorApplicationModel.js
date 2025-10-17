@@ -7,12 +7,8 @@ const InstructorApplicationSchema = new Schema(
     lastName: { type: String, required: true },
     email: { type: String, required: true },
     phone: { type: String, required: true },
-    bio: { type: String, required: true },
     expertise: [{ type: String, required: true }], // Array of expertise areas
     experience: { type: String, required: true },
-    bankName: { type: String, required: true },
-    accountNumber: { type: String, required: true },
-    accountHolderName: { type: String, required: true },
     documents: [{ type: String }], // URLs to uploaded documents
     status: {
       type: String,
