@@ -123,20 +123,10 @@ async function uploadToFirebase(
   folderType = "general"
 ) {
   try {
-    console.log(`Starting upload for file: ${fileName}`);
-    console.log(`File details:
-      - Path: ${filePath}
-      - Size: ${fs.statSync(filePath).size} bytes
-      - MIME Type: ${mimeType}
-      - Course ID: ${courseId}
-      - Folder Type: ${folderType}
-    `);
-
     const bucket = admin.storage().bucket();
 
     // Generate unique filename with timestamp
     const uniqueFileName = appendTimestampToFileName(fileName);
-    console.log(`Sanitized and timestamped filename: ${uniqueFileName}`);
 
     let destination;
     let tempFolderPath;
@@ -147,22 +137,18 @@ async function uploadToFirebase(
       tempFolderPath = `temporary/${folderType}/`;
       destination = tempFolderPath + uniqueFileName;
     }
-    console.log(`Final destination path: ${destination}`);
 
     // Upload file
-    console.log(`Uploading to destination: ${destination}`);
     await bucket.upload(filePath, {
       destination: destination,
       metadata: {
         contentType: mimeType,
       },
     });
-    console.log('Upload completed successfully');
 
     // Make file public for direct access
     const file = bucket.file(destination);
     await file.makePublic();
-    console.log('File made public successfully');
 
     // Generate URLs
     const bucketName = bucket.name;
