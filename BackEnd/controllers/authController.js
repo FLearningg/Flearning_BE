@@ -483,7 +483,6 @@ exports.registerInstructor = async (req, res) => {
       lastName,
       email,
       phone,
-      bio,
       expertise,
       experience,
       bankName,
@@ -498,7 +497,6 @@ exports.registerInstructor = async (req, res) => {
       lastName,
       email,
       phone,
-      bio: bio?.substring(0, 50),
       expertise: expertise,
       expertiseIsArray: Array.isArray(expertise),
       expertiseLength: expertise?.length,
@@ -515,7 +513,6 @@ exports.registerInstructor = async (req, res) => {
     if (!lastName) missingFields.push('lastName');
     if (!email) missingFields.push('email');
     if (!phone) missingFields.push('phone');
-    if (!bio) missingFields.push('bio');
     if (!expertise) missingFields.push('expertise (undefined/null)');
     if (Array.isArray(expertise) && expertise.length === 0) missingFields.push('expertise (empty array)');
     if (!experience) missingFields.push('experience');
@@ -563,7 +560,6 @@ exports.registerInstructor = async (req, res) => {
       lastName,
       email,
       phone,
-      bio,
       expertise,
       experience,
       bankName,
