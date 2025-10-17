@@ -13,6 +13,7 @@ const feedbackRoutes = require("./routes/feedbackRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const instructorRoutes = require("./routes/instructorRoutes");
+const publicRoutes = require("./routes/publicRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
@@ -155,6 +156,9 @@ app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
 app.use("/api/profile", profileRoutes);
+
+// Public routes (no auth required)
+app.use("/api/public", publicRoutes);
 
 // Admin routes (includes section, lesson management and file upload)
 app.use("/api/admin", adminRoutes);

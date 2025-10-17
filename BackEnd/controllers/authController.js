@@ -1,9 +1,11 @@
 const User = require("../models/userModel");
 const Token = require("../models/tokenModel");
+const InstructorApplication = require("../models/instructorApplicationModel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const sendEmail = require("../utils/sendEmail");
+const emailTemplates = require("../utils/emailTemplates");
 const { OAuth2Client } = require("google-auth-library");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -30,7 +32,7 @@ const generateTokens = (user) => {
  */
 exports.register = async (req, res) => {
   try {
-    const { firstName, lastName, email, password } = req.body;
+    const { firstName, lastName, email, password, skipEmailVerification } = req.body;
     if (!firstName || !lastName || !email || !password) {
       return res
         .status(400)
@@ -52,15 +54,19 @@ exports.register = async (req, res) => {
         email.split("@")[0] + "_" + crypto.randomBytes(4).toString("hex"),
     });
 
-    const verificationToken = crypto.randomBytes(32).toString("hex");
-    await new Token({ userId: newUser._id, token: verificationToken }).save();
-    const verificationUrl = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
-    const htmlMessage = `<p>Please click the button below to verify your email:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
-    await sendEmail(newUser.email, "Email Verification", htmlMessage);
+    // Only send verification email if not skipped (for instructor registration flow)
+    if (!skipEmailVerification) {
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      await new Token({ userId: newUser._id, token: verificationToken }).save();
+      const verificationUrl = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
+      const htmlMessage = emailTemplates.studentVerificationEmail(newUser.firstName, verificationUrl);
+      await sendEmail(newUser.email, "Email Verification - F-Learning", htmlMessage);
+    }
 
     res.status(201).json({
       message:
         "Registration successful. Please check your email to verify your account.",
+      userId: newUser._id,
     });
   } catch (error) {
     console.error(error);
@@ -337,9 +343,9 @@ exports.resendVerificationEmail = async (req, res) => {
     await new Token({ userId: user._id, token: verificationToken }).save();
 
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
-    const htmlMessage = `<p>Please click the button below to verify your email:</p><a href="${verificationUrl}" target="_blank">Verify Email</a>`;
+    const htmlMessage = emailTemplates.studentVerificationEmail(user.firstName, verificationUrl);
 
-    await sendEmail(user.email, "Email Verification", htmlMessage);
+    await sendEmail(user.email, "Email Verification - F-Learning", htmlMessage);
 
     res.status(200).json({
       message: "A new verification link has been sent to your email.",
@@ -374,9 +380,9 @@ exports.forgotPassword = async (req, res) => {
     await new Token({ userId: user._id, token: resetToken }).save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
-    const htmlMessage = `<p>Please click the button below to reset your password (link is valid for 1 hour):</p><a href="${resetUrl}" target="_blank">Reset Password</a>`;
+    const htmlMessage = emailTemplates.passwordResetEmail(user.firstName, resetUrl);
 
-    await sendEmail(user.email, "Password Reset Request", htmlMessage);
+    await sendEmail(user.email, "Password Reset Request - F-Learning", htmlMessage);
     res.status(200).json({
       message: "If the email exists in our system, a password reset link has been sent.",
     });
@@ -411,11 +417,9 @@ exports.sendMobileResetCode = async (req, res) => {
 
         await user.save();
 
-        const htmlMessage = `<p>Your password reset code for the mobile app is:</p>
-                             <h2 style="text-align:center;letter-spacing:3px;">${resetCode}</h2>
-                             <p>This code is valid for 10 minutes.</p>`;
-        
-        await sendEmail(user.email, "Mobile App Password Reset Code", htmlMessage);
+        const htmlMessage = emailTemplates.mobileResetCodeEmail(user.firstName, resetCode);
+
+        await sendEmail(user.email, "Password Reset Code - F-Learning Mobile App", htmlMessage);
         
         res.status(200).json({
             message: "A recovery code has been sent to your email.",
@@ -465,4 +469,128 @@ exports.resetPasswordWithCode = async (req, res) => {
         console.error("Error resetting password with code:", error);
         res.status(500).json({ message: "Server error" });
     }
+};
+
+/**
+ * @desc    Submit instructor registration application
+ * @route   POST /api/auth/instructor/register
+ * @access  Public
+ */
+exports.registerInstructor = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      bio,
+      expertise,
+      experience,
+      bankName,
+      accountNumber,
+      accountHolderName,
+      documents,
+    } = req.body;
+
+    // Detailed logging for debugging
+    console.log("Received instructor registration data:", {
+      firstName,
+      lastName,
+      email,
+      phone,
+      bio: bio?.substring(0, 50),
+      expertise: expertise,
+      expertiseIsArray: Array.isArray(expertise),
+      expertiseLength: expertise?.length,
+      experience: experience?.substring(0, 50),
+      bankName,
+      accountNumber,
+      accountHolderName,
+      documentsLength: documents?.length
+    });
+
+    // Validate each field individually to pinpoint the issue
+    const missingFields = [];
+    if (!firstName) missingFields.push('firstName');
+    if (!lastName) missingFields.push('lastName');
+    if (!email) missingFields.push('email');
+    if (!phone) missingFields.push('phone');
+    if (!bio) missingFields.push('bio');
+    if (!expertise) missingFields.push('expertise (undefined/null)');
+    if (Array.isArray(expertise) && expertise.length === 0) missingFields.push('expertise (empty array)');
+    if (!experience) missingFields.push('experience');
+    if (!bankName) missingFields.push('bankName');
+    if (!accountNumber) missingFields.push('accountNumber');
+    if (!accountHolderName) missingFields.push('accountHolderName');
+
+    if (missingFields.length > 0) {
+      console.log("Missing/invalid fields:", missingFields);
+      return res.status(400).json({
+        message: `Please provide all required fields. Missing: ${missingFields.join(', ')}`
+      });
+    }
+
+    // Check if email already has a pending or approved application
+    const existingApplication = await InstructorApplication.findOne({
+      email,
+      status: { $in: ["pending", "approved"] },
+    });
+
+    if (existingApplication) {
+      if (existingApplication.status === "approved") {
+        return res.status(400).json({
+          message: "This email is already registered as an instructor.",
+        });
+      }
+      return res.status(400).json({
+        message:
+          "You already have a pending application. Please wait for admin review.",
+      });
+    }
+
+    // Find the user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "User not found. Please register first." });
+    }
+
+    // Determine application status based on user's email verification
+    const applicationStatus = user.status === "verified" ? "pending" : "emailNotVerified";
+
+    // Create new instructor application
+    const newApplication = await InstructorApplication.create({
+      firstName,
+      lastName,
+      email,
+      phone,
+      bio,
+      expertise,
+      experience,
+      bankName,
+      accountNumber,
+      accountHolderName,
+      documents: documents || [],
+      status: applicationStatus, // Set status based on email verification
+    });
+
+    // Delete old verification tokens for this user
+    await Token.deleteMany({ userId: user._id });
+
+    // Generate new verification token and send instructor verification email
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    await new Token({ userId: user._id, token: verificationToken }).save();
+
+    const verificationUrl = `${process.env.CLIENT_URL}/verify-instructor-email/${verificationToken}`;
+    const htmlMessage = emailTemplates.instructorVerificationEmail(user.firstName, verificationUrl);
+    await sendEmail(user.email, "Verify Your Instructor Account - F-Learning", htmlMessage);
+
+    res.status(201).json({
+      message:
+        "Your instructor application has been submitted successfully! Please check your email to verify your account.",
+      applicationId: newApplication._id,
+    });
+  } catch (error) {
+    console.error("Error in registerInstructor:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };

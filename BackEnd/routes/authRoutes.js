@@ -11,11 +11,13 @@ const {
   resendVerificationEmail,
   sendMobileResetCode,
   resetPasswordWithCode,
+  registerInstructor,
 } = require("../controllers/authController");
 
 const router = express.Router();
 
 router.post("/register", register);
+router.post("/instructor/register", registerInstructor);
 router.get("/verify-email/:token", verifyEmail);
 router.post("/login", login);
 router.post("/google", googleLogin);
