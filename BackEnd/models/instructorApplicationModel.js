@@ -17,10 +17,16 @@ const InstructorApplicationSchema = new Schema(
     },
     reviewedBy: { type: Schema.Types.ObjectId, ref: "User" },
     reviewedAt: { type: Date },
-    reviewNotes: { type: String },
+    reviewNotes: {
+      reasons: [{ type: String }],
+      customReason: { type: String },
+    },
     userId: { type: Schema.Types.ObjectId, ref: "User" }, // If user is already registered
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("InstructorApplication", InstructorApplicationSchema);
+module.exports = mongoose.model(
+  "InstructorApplication",
+  InstructorApplicationSchema
+);

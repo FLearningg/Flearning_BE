@@ -1,5 +1,5 @@
-const F_LEARNING_ORANGE = '#FF6B00';
-const F_LEARNING_LIGHT = '#FFF7E6';
+const F_LEARNING_ORANGE = "#FF6B00";
+const F_LEARNING_LIGHT = "#FFF7E6";
 
 // Common email header with logo
 const emailHeader = (title) => `
@@ -39,9 +39,9 @@ const emailWrapper = (content) => `
 
 // Button component
 const button = (url, text, isPrimary = true) => {
-  const bgColor = isPrimary ? F_LEARNING_ORANGE : 'transparent';
-  const textColor = isPrimary ? 'white' : F_LEARNING_ORANGE;
-  const border = isPrimary ? 'none' : `2px solid ${F_LEARNING_ORANGE}`;
+  const bgColor = isPrimary ? F_LEARNING_ORANGE : "transparent";
+  const textColor = isPrimary ? "white" : F_LEARNING_ORANGE;
+  const border = isPrimary ? "none" : `2px solid ${F_LEARNING_ORANGE}`;
 
   return `
     <a href="${url}"
@@ -65,7 +65,7 @@ const button = (url, text, isPrimary = true) => {
  */
 exports.studentVerificationEmail = (firstName, verificationUrl) => {
   const content = `
-    ${emailHeader('Welcome to F-Learning!')}
+    ${emailHeader("Welcome to F-Learning!")}
     <div style="padding: 40px 30px;">
       <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
@@ -75,7 +75,7 @@ exports.studentVerificationEmail = (firstName, verificationUrl) => {
         To get started, please verify your email address by clicking the button below:
       </p>
       <div style="text-align: center; margin: 30px 0;">
-        ${button(verificationUrl, 'Verify Email Address')}
+        ${button(verificationUrl, "Verify Email Address")}
       </div>
       <div style="background-color: ${F_LEARNING_LIGHT}; padding: 16px; border-radius: 8px; border-left: 4px solid ${F_LEARNING_ORANGE};">
         <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
@@ -100,7 +100,7 @@ exports.studentVerificationEmail = (firstName, verificationUrl) => {
  */
 exports.instructorVerificationEmail = (firstName, verificationUrl) => {
   const content = `
-    ${emailHeader('Welcome to F-Learning Instructor Community!')}
+    ${emailHeader("Welcome to F-Learning Instructor Community!")}
     <div style="padding: 40px 30px;">
       <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
@@ -110,7 +110,7 @@ exports.instructorVerificationEmail = (firstName, verificationUrl) => {
         <strong>First, let's verify your email address:</strong>
       </p>
       <div style="text-align: center; margin: 30px 0;">
-        ${button(verificationUrl, 'Verify Email Address')}
+        ${button(verificationUrl, "Verify Email Address")}
       </div>
       <div style="background-color: #e6f7ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
         <h3 style="color: #262626; margin-top: 0; font-size: 18px;">📋 What's Next?</h3>
@@ -143,9 +143,15 @@ exports.instructorVerificationEmail = (firstName, verificationUrl) => {
 /**
  * Instructor application received confirmation
  */
-exports.instructorApplicationReceivedEmail = (firstName, lastName, email, phone, expertise) => {
+exports.instructorApplicationReceivedEmail = (
+  firstName,
+  lastName,
+  email,
+  phone,
+  expertise
+) => {
   const content = `
-    ${emailHeader('Application Received')}
+    ${emailHeader("Application Received")}
     <div style="padding: 40px 30px;">
       <h2 style="color: #262626; margin-top: 0;">Dear ${firstName} ${lastName},</h2>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
@@ -193,7 +199,7 @@ exports.instructorApplicationReceivedEmail = (firstName, lastName, email, phone,
  */
 exports.passwordResetEmail = (firstName, resetUrl) => {
   const content = `
-    ${emailHeader('Password Reset Request')}
+    ${emailHeader("Password Reset Request")}
     <div style="padding: 40px 30px;">
       <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
@@ -203,7 +209,7 @@ exports.passwordResetEmail = (firstName, resetUrl) => {
         Click the button below to reset your password:
       </p>
       <div style="text-align: center; margin: 30px 0;">
-        ${button(resetUrl, 'Reset Password')}
+        ${button(resetUrl, "Reset Password")}
       </div>
       <div style="background-color: #fff7e6; padding: 16px; border-radius: 8px; border-left: 4px solid #faad14;">
         <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
@@ -228,7 +234,7 @@ exports.passwordResetEmail = (firstName, resetUrl) => {
  */
 exports.mobileResetCodeEmail = (firstName, resetCode) => {
   const content = `
-    ${emailHeader('Password Reset Code')}
+    ${emailHeader("Password Reset Code")}
     <div style="padding: 40px 30px;">
       <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
@@ -244,6 +250,56 @@ exports.mobileResetCodeEmail = (firstName, resetCode) => {
           <strong>Security Notice:</strong> This code is valid for 10 minutes. If you didn't request this code, please ignore this email.
         </p>
       </div>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
+/**
+ * Instructor application denied email
+ */
+exports.instructorApplicationDeniedEmail = (firstName, reason) => {
+  const content = `
+    ${emailHeader("Application Denied")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Dear ${firstName},</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        We regret to inform you that your application to become an instructor on F-Learning has been denied.
+      </p>
+      <div style="background-color: #fff7e6; padding: 20px; border-radius: 8px; margin: 25px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">Reason for Denial:</h3>
+        <p style="color: #8c8c8c; font-size: 14px; margin: 0;">${reason}</p>
+      </div>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        If you believe this decision was made in error or have further questions, please contact us at support@f-learning.com.
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
+/**
+ * Instructor application approved email
+ */
+exports.instructorApplicationApprovedEmail = (firstName) => {
+  const content = `
+    ${emailHeader("Application Approved")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Congratulations ${firstName}!</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        We are thrilled to inform you that your application to become an instructor on F-Learning has been approved! 🎉
+      </p>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        You can now log in to your account and start creating courses to share your knowledge with our learning community.
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button("https://f-learning.com/login", "Log In to Your Account")}
+      </div>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        If you have any questions or need assistance, feel free to reach out to us at support@f-learning.com.
+      </p>
     </div>
     ${emailFooter()}
   `;
