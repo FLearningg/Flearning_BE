@@ -1,6 +1,6 @@
 const User = require("../models/userModel");
 const Token = require("../models/tokenModel");
-const InstructorApplication = require("../models/instructorApplicationModel");
+const InstructorProfile = require("../models/instructorProfileModel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -112,22 +112,22 @@ exports.verifyEmail = async (req, res) => {
     await user.save();
     console.log("User status updated to verified for:", user.email);
 
-    // Update instructor application status if exists
-    const instructorApplication = await InstructorApplication.findOne({ 
-      email: user.email,
-      status: "emailNotVerified" 
+    // Update instructor profile status if exists
+    const instructorProfile = await InstructorProfile.findOne({ 
+      userId: user._id,
+      applicationStatus: "emailNotVerified" 
     });
     
-    console.log("Looking for instructor application with email:", user.email);
-    console.log("Found instructor application:", instructorApplication ? "YES" : "NO");
+    console.log("Looking for instructor profile for user ID:", user._id);
+    console.log("Found instructor profile:", instructorProfile ? "YES" : "NO");
     
-    if (instructorApplication) {
-      console.log("Current application status:", instructorApplication.status);
-      instructorApplication.status = "pending";
-      await instructorApplication.save();
-      console.log("Updated instructor application status to pending for:", user.email);
+    if (instructorProfile) {
+      console.log("Current profile status:", instructorProfile.applicationStatus);
+      instructorProfile.applicationStatus = "pending";
+      await instructorProfile.save();
+      console.log("Updated instructor profile status to pending for user:", user.email);
     } else {
-      console.log("No instructor application found with status 'emailNotVerified' for:", user.email);
+      console.log("No instructor profile found with status 'emailNotVerified' for user:", user.email);
     }
 
     await tokenDocument.deleteOne();
@@ -539,50 +539,78 @@ exports.registerInstructor = async (req, res) => {
     }
 
     // Check if email already has a pending or approved application
-    const existingApplication = await InstructorApplication.findOne({
-      email,
-      status: { $in: ["pending", "approved"] },
-    });
-
-    if (existingApplication) {
-      if (existingApplication.status === "approved") {
-        return res.status(400).json({
-          message: "This email is already registered as an instructor.",
-        });
-      }
-      return res.status(400).json({
-        message:
-          "You already have a pending application. Please wait for admin review.",
-      });
-    }
-
-    // Find the user by email
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: "User not found. Please register first." });
+    
+    if (user) {
+      // Check if user already has an instructor profile
+      const existingProfile = await InstructorProfile.findOne({ userId: user._id });
+      
+      if (existingProfile) {
+        if (existingProfile.applicationStatus === "approved") {
+          return res.status(400).json({
+            message: "This email is already registered as an instructor.",
+          });
+        }
+        if (existingProfile.applicationStatus === "pending") {
+          return res.status(400).json({
+            message: "You already have a pending application. Please wait for admin review.",
+          });
+        }
+        // If status is rejected or emailNotVerified, allow reapplication
+      }
+    } else {
+      // User doesn't exist, create new user
+      const hashedPassword = await bcrypt.hash(password, 12);
+      
+      const newUser = new User({
+        firstName,
+        lastName,
+        email,
+        password: hashedPassword,
+        role: "student", // Will be changed to instructor after approval
+        status: "unverified",
+      });
+      
+      await newUser.save();
+      console.log(`✅ Created new user with ID: ${newUser._id}`);
+      user = newUser;
     }
 
     // Determine application status based on user's email verification
     const applicationStatus = user.status === "verified" ? "pending" : "emailNotVerified";
     
-    console.log("Creating instructor application:");
+    console.log("Creating instructor profile:");
     console.log("- Email:", email);
+    console.log("- User ID:", user._id);
     console.log("- User status:", user.status);
     console.log("- Application status will be:", applicationStatus);
 
-    // Create new instructor application
-    const newApplication = await InstructorApplication.create({
-      firstName,
-      lastName,
-      email,
-      phone,
-      expertise,
-      experience,
-      documents: documents || [],
-      status: applicationStatus, // Set status based on email verification
-    });
+    // Create or update instructor profile
+    let profile = await InstructorProfile.findOne({ userId: user._id });
     
-    console.log("Created application with ID:", newApplication._id, "and status:", newApplication.status);
+    if (profile) {
+      // Update existing profile (in case of reapplication)
+      profile.phone = phone;
+      profile.expertise = expertise;
+      profile.experience = experience;
+      profile.documents = documents || [];
+      profile.applicationStatus = applicationStatus;
+      profile.appliedAt = new Date();
+      profile.rejectionReason = undefined; // Clear previous rejection reason
+      await profile.save();
+      console.log("Updated existing profile with ID:", profile._id);
+    } else {
+      // Create new instructor profile
+      profile = await InstructorProfile.create({
+        userId: user._id,
+        phone,
+        expertise,
+        experience,
+        documents: documents || [],
+        applicationStatus,
+      });
+      console.log("Created new profile with ID:", profile._id, "and status:", profile.applicationStatus);
+    }
 
     // Delete old verification tokens for this user
     await Token.deleteMany({ userId: user._id });
@@ -598,7 +626,7 @@ exports.registerInstructor = async (req, res) => {
     res.status(201).json({
       message:
         "Your instructor application has been submitted successfully! Please check your email to verify your account.",
-      applicationId: newApplication._id,
+      profileId: profile._id,
     });
   } catch (error) {
     console.error("Error in registerInstructor:", error);
