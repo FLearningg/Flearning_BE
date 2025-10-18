@@ -18,6 +18,7 @@ router.get("/search", courseController.searchCourses);
 router.get("/top-selling", courseController.getTopCourses);
 router.get("/recently-added", courseController.getNewCourses);
 router.post("/enroll-course", courseController.enrollCourse);
+router.get("/is-enrolled", authorize(), courseController.isUserEnrolled);
 
 // Course details
 router.get("/:courseId", getCourseDetails);

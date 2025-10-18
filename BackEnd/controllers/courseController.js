@@ -7,6 +7,7 @@ const Discount = require("../models/discountModel");
 const section = require("../models/sectionModel");
 const Category = require("../models/categoryModel");
 const User = require("../models/userModel");
+const Enrollment = require("../models/enrollmentModel");
 const courseController = {
   /**
    * @desc    Lấy danh sách khóa học: Hỗ trợ lọc, sắp xếp và phân trang. Dùng cho các use case: View Courses, Filter, Sort.
@@ -192,6 +193,31 @@ const courseController = {
         message: "Discount assigned to course successfully",
         course: updatedCourse,
       });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+  /**
+   * @desc    Kiểm tra xem user đã join khóa học hay chưa
+   * @route   GET /api/courses/is-enrolled
+   * @access  Admin
+   */
+  isUserEnrolled: async (req, res) => {
+    try {
+      // SỬA Ở ĐÂY: Đổi từ req.body sang req.query
+      const { userId, courseId } = req.query;
+
+      if (!userId || !courseId) {
+        return res.status(400).json({ message: "Missing userId or courseId" });
+      }
+
+      const enrollment = await Enrollment.findOne({
+        userId: userId,
+        courseId: courseId,
+        status: "enrolled",
+      });
+
+      res.status(200).json({ isEnrolled: !!enrollment });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
