@@ -1,4 +1,47 @@
 const Discount = require("../models/discountModel");
+const Course = require("../models/courseModel");
+
+/**
+ * Helper function to validate if courses exist and user has permission
+ * @param {Array} courseIds - Array of course IDs
+ * @param {Object} user - User object from req.user
+ * @returns {Object} { valid: boolean, message: string, courses: Array }
+ */
+const validateCoursesOwnership = async (courseIds, user) => {
+  // If no courses specified, it's valid (discount applies to all courses)
+  if (!courseIds || courseIds.length === 0) {
+    return { valid: true, courses: [] };
+  }
+
+  // Check if all courses exist
+  const courses = await Course.find({ _id: { $in: courseIds } });
+
+  if (courses.length !== courseIds.length) {
+    return {
+      valid: false,
+      message: "Some courses do not exist",
+      courses: [],
+    };
+  }
+
+  // If user is instructor, check if they own all the courses
+  if (user.role === "instructor") {
+    const notOwnedCourses = courses.filter(
+      (course) => course.createdBy.toString() !== user._id.toString()
+    );
+
+    if (notOwnedCourses.length > 0) {
+      return {
+        valid: false,
+        message: "You can only apply discount to your own courses",
+        courses: [],
+      };
+    }
+  }
+
+  // Admin can apply to any courses, so validation passes
+  return { valid: true, courses };
+};
 
 /**
  * @desc    Get all discounts with filtering and pagination
@@ -11,6 +54,77 @@ exports.getAllDiscounts = async (req, res) => {
 
     // Build filter object
     const filter = {};
+
+    if (status) filter.status = status;
+    if (category) filter.category = category;
+    if (type) filter.type = type;
+
+    // Search by discount code or description
+    if (search) {
+      filter.$or = [
+        { discountCode: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get discounts with pagination
+    const discounts = await Discount.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate("userId", "name email");
+
+    // Get total count for pagination
+    const totalDiscounts = await Discount.countDocuments(filter);
+    const totalPages = Math.ceil(totalDiscounts / parseInt(limit));
+
+    if (!discounts || discounts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No discounts found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Get discounts list successfully",
+      data: {
+        discounts,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalDiscounts,
+          hasNextPage: parseInt(page) < totalPages,
+          hasPrevPage: parseInt(page) > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get all discounts error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get instructor's own discounts with filtering and pagination
+ * @route   GET /api/instructor/discounts
+ * @access  Instructor
+ */
+exports.getInstructorDiscounts = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status, category, type, search } = req.query;
+
+    // Build filter object - only show discounts created by this instructor
+    const filter = {
+      userId: req.user._id,
+    };
 
     if (status) filter.status = status;
     if (category) filter.category = category;
@@ -46,7 +160,7 @@ exports.getAllDiscounts = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Get discounts list successfully",
+      message: "Get instructor discounts list successfully",
       data: {
         discounts,
         pagination: {
@@ -59,7 +173,7 @@ exports.getAllDiscounts = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Get all discounts error:", error);
+    console.error("Get instructor discounts error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -104,7 +218,8 @@ exports.getDiscountById = async (req, res) => {
 /**
  * @desc    Create new discount
  * @route   POST /api/admin/discounts
- * @access  Admin
+ * @route   POST /api/instructor/discounts
+ * @access  Admin, Instructor
  */
 exports.createDiscount = async (req, res) => {
   try {
@@ -120,6 +235,7 @@ exports.createDiscount = async (req, res) => {
       maximumDiscount,
       startDate,
       endDate,
+      applyCourses, // Array of course IDs
     } = req.body;
 
     // Validate required fields
@@ -192,6 +308,18 @@ exports.createDiscount = async (req, res) => {
       });
     }
 
+    // Validate applyCourses ownership
+    const courseValidation = await validateCoursesOwnership(
+      applyCourses,
+      req.user
+    );
+    if (!courseValidation.valid) {
+      return res.status(403).json({
+        success: false,
+        message: courseValidation.message,
+      });
+    }
+
     // Create new discount
     const newDiscount = new Discount({
       discountCode,
@@ -206,6 +334,8 @@ exports.createDiscount = async (req, res) => {
       maximumDiscount: maximumDiscount || 0,
       startDate: startDate ? new Date(startDate) : null,
       endDate: endDate ? new Date(endDate) : null,
+      userId: req.user._id, // Save the creator's userId
+      applyCourses: applyCourses || [], // Save the courses this discount applies to
     });
 
     const savedDiscount = await newDiscount.save();
@@ -229,6 +359,8 @@ exports.createDiscount = async (req, res) => {
  * @desc    Update discount by ID
  * @route   PUT /api/admin/discounts/:discountId
  * @access  Admin
+ * @route   PUT /api/instructor/discounts/:discountId
+ * @access  Instructor (only their own discounts)
  */
 exports.updateDiscount = async (req, res) => {
   try {
@@ -242,6 +374,16 @@ exports.updateDiscount = async (req, res) => {
         success: false,
         message: "Discount not found",
       });
+    }
+
+    // Check ownership for instructors (admins can update any discount)
+    if (req.user.role === "instructor") {
+      if (existingDiscount.userId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to update this discount",
+        });
+      }
     }
 
     // Validate category enum if provided
@@ -326,6 +468,20 @@ exports.updateDiscount = async (req, res) => {
       });
     }
 
+    // Validate applyCourses ownership if provided
+    if (updateData.applyCourses !== undefined) {
+      const courseValidation = await validateCoursesOwnership(
+        updateData.applyCourses,
+        req.user
+      );
+      if (!courseValidation.valid) {
+        return res.status(403).json({
+          success: false,
+          message: courseValidation.message,
+        });
+      }
+    }
+
     // Convert date strings to Date objects if provided
     if (updateData.startDate) {
       updateData.startDate = new Date(updateData.startDate);
@@ -333,6 +489,9 @@ exports.updateDiscount = async (req, res) => {
     if (updateData.endDate) {
       updateData.endDate = new Date(updateData.endDate);
     }
+
+    // Prevent updating userId
+    delete updateData.userId;
 
     // Update discount
     const updatedDiscount = await Discount.findByIdAndUpdate(
@@ -348,50 +507,6 @@ exports.updateDiscount = async (req, res) => {
     });
   } catch (error) {
     console.error("Update discount error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-};
-
-/**
- * @desc    Delete discount by ID
- * @route   DELETE /api/admin/discounts/:discountId
- * @access  Admin
- */
-exports.deleteDiscount = async (req, res) => {
-  try {
-    const { discountId } = req.params;
-
-    // Check if discount exists
-    const discount = await Discount.findById(discountId);
-    if (!discount) {
-      return res.status(404).json({
-        success: false,
-        message: "Discount not found",
-      });
-    }
-
-    // Check if discount is being used (has usage > 0)
-    if (discount.usage > 0) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Cannot delete discount that has been used. Please set status to 'inActive' instead of deleting.",
-      });
-    }
-
-    // Delete discount
-    await Discount.findByIdAndDelete(discountId);
-
-    res.status(200).json({
-      success: true,
-      message: "Delete discount successfully",
-    });
-  } catch (error) {
-    console.error("Delete discount error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
