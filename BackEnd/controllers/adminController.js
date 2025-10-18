@@ -9,7 +9,12 @@ const Quiz = require("../models/QuizModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const Transaction = require("../models/transactionModel");
-
+const InstructorApplication = require("../models/instructorApplicationModel");
+const {
+  instructorApplicationApprovedEmail,
+  instructorApplicationDeniedEmail,
+} = require("../utils/emailTemplates");
+const sendEmail = require("../utils/sendEmail");
 /**
  * Helper function to extract file name from URL
  * @param {string} url - Firebase storage URL or any URL
@@ -966,39 +971,47 @@ exports.createCourse = async (req, res) => {
             } else {
               // Temporary ID - create real quiz from quiz data
               try {
-                const { createQuizFromData } = require('./quizController');
-                
+                const { createQuizFromData } = require("./quizController");
+
                 // Prepare quiz data for creation
                 const quizPayload = {
                   title: lessonData.quizData.title,
-                  description: lessonData.quizData.description || '',
+                  description: lessonData.quizData.description || "",
                   questions: lessonData.quizData.questions || [],
                   timeLimit: lessonData.quizData.timeLimit || null,
                   passingScore: lessonData.quizData.passingScore || 70,
                   maxAttempts: lessonData.quizData.maxAttempts || 3,
-                  randomizeQuestions: lessonData.quizData.randomizeQuestions || false,
-                  showCorrectAnswers: lessonData.quizData.showCorrectAnswers || true
+                  randomizeQuestions:
+                    lessonData.quizData.randomizeQuestions || false,
+                  showCorrectAnswers:
+                    lessonData.quizData.showCorrectAnswers || true,
                 };
 
                 // Check if we have questions data
-                if (!quizPayload.questions || quizPayload.questions.length === 0) {
-                  console.log(`⚠️ No questions found in quiz data. Skipping quiz creation.`);
+                if (
+                  !quizPayload.questions ||
+                  quizPayload.questions.length === 0
+                ) {
+                  console.log(
+                    `⚠️ No questions found in quiz data. Skipping quiz creation.`
+                  );
                   // Treat as regular lesson instead
                   continue;
                 }
 
                 // Validate questions structure - check if questions are corrupted
                 const firstQuestion = quizPayload.questions[0];
-                let hasValidStructure = firstQuestion && 
-                                        firstQuestion.content && 
-                                        firstQuestion.answers && 
-                                        Array.isArray(firstQuestion.answers) && 
-                                        firstQuestion.answers.length > 0;
+                let hasValidStructure =
+                  firstQuestion &&
+                  firstQuestion.content &&
+                  firstQuestion.answers &&
+                  Array.isArray(firstQuestion.answers) &&
+                  firstQuestion.answers.length > 0;
 
                 // Check if frontend sent data in different format (question/options instead of content/answers)
                 if (!hasValidStructure && firstQuestion) {
                   // Map frontend format to backend format
-                  quizPayload.questions = quizPayload.questions.map(q => {
+                  quizPayload.questions = quizPayload.questions.map((q) => {
                     if (q.question && q.options) {
                       return {
                         content: q.question,
@@ -1006,48 +1019,57 @@ exports.createCourse = async (req, res) => {
                           let options = [];
                           if (Array.isArray(q.options)) {
                             options = q.options;
-                          } else if (q.options && typeof q.options === 'object') {
+                          } else if (
+                            q.options &&
+                            typeof q.options === "object"
+                          ) {
                             // Convert object to array (handle {0: 'Apple', 1: 'Google'} format)
                             options = Object.values(q.options);
                           }
-                          
+
                           return options.map((option, index) => ({
-                            content: option,  // Changed from 'text' to 'content'
-                            isCorrect: index === (q.correctAnswer || 0)
+                            content: option, // Changed from 'text' to 'content'
+                            isCorrect: index === (q.correctAnswer || 0),
                           }));
                         })(),
                         score: q.score || 1,
-                        type: 'multiple-choice'
+                        type: "multiple-choice",
                       };
                     }
                     return q;
                   });
-                  
+
                   // Revalidate after mapping
                   const mappedFirstQuestion = quizPayload.questions[0];
-                  hasValidStructure = mappedFirstQuestion && 
-                                    mappedFirstQuestion.content && 
-                                    mappedFirstQuestion.answers && 
-                                    Array.isArray(mappedFirstQuestion.answers) && 
-                                    mappedFirstQuestion.answers.length > 0;
+                  hasValidStructure =
+                    mappedFirstQuestion &&
+                    mappedFirstQuestion.content &&
+                    mappedFirstQuestion.answers &&
+                    Array.isArray(mappedFirstQuestion.answers) &&
+                    mappedFirstQuestion.answers.length > 0;
                 }
 
                 if (!hasValidStructure) {
-                  console.log(`⚠️ Questions data corrupted - missing content or answers after mapping attempt. Skipping quiz creation.`);
+                  console.log(
+                    `⚠️ Questions data corrupted - missing content or answers after mapping attempt. Skipping quiz creation.`
+                  );
                   // Skip this corrupted quiz lesson
                   continue;
                 }
 
                 // Create real quiz
-                quizPayload.userId = req.user?.id || req.userId || null;  // Add userId
-                quizPayload.roleCreated = 'instructor';  // Add role
+                quizPayload.userId = req.user?.id || req.userId || null; // Add userId
+                quizPayload.roleCreated = "instructor"; // Add role
                 const realQuiz = await createQuizFromData(quizPayload);
-                
+
                 // Use real quiz ID
                 finalQuizIds = [realQuiz._id];
                 lessonType = "quiz";
               } catch (error) {
-                console.error(`❌ Failed to create quiz from temp data:`, error.message);
+                console.error(
+                  `❌ Failed to create quiz from temp data:`,
+                  error.message
+                );
                 // Skip this lesson if quiz creation fails
                 continue;
               }
@@ -1408,28 +1430,33 @@ exports.updateCourse = async (req, res) => {
             } else {
               // Temporary ID - create real quiz from quiz data
               try {
-                const { createQuizFromData } = require('./quizController');
-                
+                const { createQuizFromData } = require("./quizController");
+
                 // Prepare quiz data for creation
                 const quizPayload = {
                   title: lessonData.quizData.title,
-                  description: lessonData.quizData.description || '',
+                  description: lessonData.quizData.description || "",
                   questions: lessonData.quizData.questions || [],
                   timeLimit: lessonData.quizData.timeLimit || null,
                   passingScore: lessonData.quizData.passingScore || 70,
                   maxAttempts: lessonData.quizData.maxAttempts || 3,
-                  randomizeQuestions: lessonData.quizData.randomizeQuestions || false,
-                  showCorrectAnswers: lessonData.quizData.showCorrectAnswers || true
+                  randomizeQuestions:
+                    lessonData.quizData.randomizeQuestions || false,
+                  showCorrectAnswers:
+                    lessonData.quizData.showCorrectAnswers || true,
                 };
 
                 // Create real quiz
                 const realQuiz = await createQuizFromData(quizPayload);
-                
+
                 // Use real quiz ID
                 finalQuizIds = [realQuiz._id];
                 lessonType = "quiz";
               } catch (error) {
-                console.error(`❌ Update: Failed to create quiz from temp data:`, error.message);
+                console.error(
+                  `❌ Update: Failed to create quiz from temp data:`,
+                  error.message
+                );
                 // Skip this lesson if quiz creation fails
                 continue;
               }
@@ -1882,12 +1909,10 @@ exports.createLesson = async (req, res) => {
       lessonType === "quiz" &&
       (!Array.isArray(quizIds) || quizIds.length === 0)
     ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "quizIds are required for quiz lessons",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "quizIds are required for quiz lessons",
+      });
     }
 
     // Create new lesson
@@ -1971,12 +1996,10 @@ exports.updateLesson = async (req, res) => {
       lessonType === "quiz" &&
       (!Array.isArray(quizIds) || quizIds.length === 0)
     ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "quizIds are required for quiz lessons",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "quizIds are required for quiz lessons",
+      });
     }
 
     const updateData = {};
@@ -2588,5 +2611,182 @@ exports.updateLessonFile = async (req, res) => {
       message: "Server error",
       error: error.message,
     });
+  }
+};
+
+/**
+ * @desc    Get all instructor requests
+ * @route   GET /api/admin/instructor-requests
+ * @access  Private (Admin only)
+ */
+exports.getInstructorRequests = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      status = "",
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    // Build query object
+    const query = {};
+
+    // Filter by status
+    if (status) {
+      query.status = status;
+    }
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Execute query with pagination
+    const requests = await InstructorApplication.find(query)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate("userId", "firstName lastName email")
+      .select(
+        "firstName lastName email phone bio expertise experience bankName accountNumber accountHolderName documents status reviewedBy reviewedAt reviewNotes createdAt updatedAt"
+      );
+
+    // Get total count for pagination
+    const totalRequests = await InstructorApplication.countDocuments(query);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalRequests / parseInt(limit));
+    const hasNextPage = parseInt(page) < totalPages;
+    const hasPrevPage = parseInt(page) > 1;
+
+    res.status(200).json({
+      success: true,
+      data: requests,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalRequests,
+        hasNextPage,
+        hasPrevPage,
+        limit: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getInstructorRequests:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Approve instructor request
+ * @route   POST /api/admin/instructor-requests/approve
+ * @access  Private (Admin only)
+ */
+exports.approveInstructorRequest = async (req, res) => {
+  try {
+    const { applicationId } = req.body;
+
+    if (!applicationId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Application ID is required." });
+    }
+
+    const application = await InstructorApplication.findById(applicationId);
+
+    if (!application) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Instructor application not found." });
+    }
+
+    application.status = "approved";
+    application.reviewedBy = req.user.id; // Assuming `req.user` contains the admin's info
+    application.reviewedAt = new Date();
+
+    await application.save();
+
+    // Send approval email
+    const emailContent = instructorApplicationApprovedEmail(
+      application.firstName
+    );
+    await sendEmail(
+      application.email,
+      "Your Instructor Application is Approved!",
+      emailContent
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Instructor request approved successfully.",
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Deny instructor request
+ * @route   POST /api/admin/instructor-requests/deny
+ * @access  Private (Admin only)
+ */
+exports.denyInstructorRequest = async (req, res) => {
+  try {
+    const { applicationId, reasons, customReason } = req.body;
+
+    if (!applicationId || !reasons || !Array.isArray(reasons)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid request data." });
+    }
+
+    const application = await InstructorApplication.findById(applicationId);
+
+    if (!application) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Instructor application not found." });
+    }
+
+    application.status = "rejected";
+    application.reviewedBy = req.user.id; // Assuming `req.user` contains the admin's info
+    application.reviewedAt = new Date();
+    application.reviewNotes = {
+      reasons,
+      customReason,
+    };
+
+    await application.save();
+
+    // Send denial email
+    const reasonText =
+      reasons.join(", ") + (customReason ? `: ${customReason}` : "");
+    const emailContent = instructorApplicationDeniedEmail(
+      application.firstName,
+      reasonText
+    );
+    await sendEmail(
+      application.email,
+      "Your Instructor Application is Denied",
+      emailContent
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Instructor request denied successfully.",
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };

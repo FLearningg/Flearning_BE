@@ -22,6 +22,9 @@ const {
   getAllCategories,
   deleteLessonFile,
   updateLessonFile,
+  getInstructorRequests,
+  approveInstructorRequest,
+  denyInstructorRequest,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -89,5 +92,10 @@ router.post("/fix-cors-url", fixCorsUrl);
 router.get("/stats", authorize("admin"), getDashboardStats);
 
 router.get("/categories", getAllCategories);
+
+// Instructor requests route
+router.get("/instructor-requests", getInstructorRequests);
+router.post("/instructors/approve", approveInstructorRequest);
+router.post("/instructors/deny", denyInstructorRequest);
 
 module.exports = router;
