@@ -7,6 +7,9 @@ const Discount = require("../models/discountModel");
 const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 
+// Use mongoose.models to avoid OverwriteModelError
+const InstructorProfile = mongoose.models.InstructorProfile || require("../models/instructorProfileModel");
+
 /**
  * @desc    Get details for a specific course
  * @route   GET /api/courses/:courseId
@@ -25,10 +28,26 @@ exports.getCourseDetails = async (req, res) => {
         options: { sort: { order: 1 } }, // nếu muốn sections sắp theo thứ tự
       })
       .populate("categoryIds")
-      .populate("discountId");
+      .populate("discountId")
+      .populate("createdBy", "firstName lastName email userImage userName");
 
     if (!course) {
       return res.status(404).json({ message: "Course not found" });
+    }
+
+    // Manually fetch instructor profile if course creator is an instructor
+    if (course.createdBy) {
+      const instructorProfile = await InstructorProfile.findOne({
+        userId: course.createdBy._id,
+      }).select("headline bio totalStudents totalCourses averageRating totalReviews");
+
+      // Attach instructor profile to user object
+      if (instructorProfile) {
+        course.createdBy = {
+          ...course.createdBy.toObject(),
+          instructorProfile: instructorProfile,
+        };
+      }
     }
 
     res.json(course);
