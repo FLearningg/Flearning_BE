@@ -331,80 +331,104 @@ const getEnrolledCourses = async (req, res) => {
  */
 const getPurchaseHistory = async (req, res) => {
   try {
-    const userId = req.user.id; // From auth middleware (string)
+    const userId = req.user.id;
     const { page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
-
-    // Get transactions for this user
-    const transactions = await Transaction.find({
-      userId: new mongoose.Types.ObjectId(userId),
-    })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
+    const userIdObj = new mongoose.Types.ObjectId(userId);
 
     const totalTransactions = await Transaction.countDocuments({
-      userId: new mongoose.Types.ObjectId(userId),
+      userId: userIdObj,
+      status: "completed", // <-- Chỉ lấy giao dịch đã hoàn thành
     });
     const totalPages = Math.ceil(totalTransactions / limit);
 
-    // For each transaction, fetch payment and course info
-    const data = await Promise.all(
-      transactions.map(async (tran) => {
-        // Find related payment (if any)
-        const payment = await Payment.findOne({ transactionId: tran._id });
-        // Find related course (first courseId in array)
-        let course = null;
-        let categoryName = null;
-        if (tran.courseId && tran.courseId.length > 0) {
-          course = await Course.findById(tran.courseId[0]).populate({
-            path: "categoryIds",
-            select: "name",
-          });
-          if (course && course.categoryIds && course.categoryIds.length > 0) {
-            categoryName = course.categoryIds[0].name;
-          }
-        }
-        return {
-          paymentId: tran._id,
-          amount: parseFloat(tran.amount),
-          currency: tran.currency,
-          status: tran.status,
-          type: tran.type,
-          description: tran.description,
-          gatewayTransactionId: tran.gatewayTransactionId,
-          createdAt: tran.createdAt,
-          updatedAt: tran.updatedAt,
-          paymentMethod: payment ? payment.paymentMethod : null,
-          paymentDate: payment ? payment.paymentDate : tran.createdAt,
-          course: course
-            ? {
-                id: course._id,
-                title: course.title,
-                subTitle: course.subTitle,
-                thumbnail: course.thumbnail,
-                price: course.price,
-                rating: course.rating,
-                level: course.level,
-                duration: course.duration,
-                language: course.language,
-                category: categoryName,
-                createdAt: course.createdAt,
-              }
-            : null,
-          transaction: {
-            gatewayTransactionId: tran.gatewayTransactionId,
-            status: tran.status,
-            type: tran.type,
+    const courseSelectFields = "title thumbnail price rating categoryIds"; // Lấy các trường cần thiết
+
+    // BƯỚC 1: Lấy các GIAO DỊCH (Biên lai) và POPULATE sâu
+    const transactions = await Transaction.find({
+      userId: userIdObj,
+      status: "completed", // <-- Chỉ lấy giao dịch đã hoàn thành
+    })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate({
+        path: "paymentId", // 1. Từ Transaction -> Lấy Payment (Hóa đơn)
+        model: "Payment",
+        populate: {
+          path: "enrollmentIds", // 2. Từ Payment -> Lấy mảng Enrollment
+          model: "Enrollment",
+          populate: {
+            path: "courseId", // 3. Từ Enrollment -> Lấy Course
+            model: "Course",
+            select: courseSelectFields,
+            populate: {
+              path: "categoryIds", // 4. Từ Course -> Lấy Category
+              model: "Category",
+              select: "name",
+            },
           },
-        };
-      })
-    );
+        },
+      });
+
+    // BƯỚC 2: Chuyển đổi dữ liệu
+    const data = transactions.map((tran) => {
+      const payment = tran.paymentId;
+      let coursesList = [];
+      let totalCourses = 0;
+
+      // Logic mới: Lặp qua TẤT CẢ enrollments
+      if (
+        payment &&
+        payment.enrollmentIds &&
+        payment.enrollmentIds.length > 0
+      ) {
+        totalCourses = payment.enrollmentIds.length;
+
+        coursesList = payment.enrollmentIds.map((enrollment) => {
+          const course = enrollment.courseId; // Đây là object Course
+          const categoryName =
+            course.categoryIds && course.categoryIds.length > 0
+              ? course.categoryIds[0].name
+              : "Uncategorized";
+
+          // Trả về object course sạch
+          return {
+            id: course._id,
+            title: course.title,
+            thumbnail: course.thumbnail,
+            price: course.price,
+            rating: course.rating,
+            category: categoryName,
+          };
+        });
+      }
+
+      return {
+        paymentId: tran._id, // ID của Transaction
+        amount: parseFloat(tran.amount), // Tổng tiền
+        status: tran.status,
+        description: tran.description,
+        gatewayTransactionId: tran.gatewayTransactionId,
+        createdAt: tran.createdAt,
+        paymentMethod: payment ? payment.paymentMethod : "N/A", // Thanh toán qua đâu
+        paymentDate: payment ? payment.paymentDate : tran.createdAt, // Thời gian
+
+        courses: coursesList, // <-- Mảng các khóa học
+        totalCourses: totalCourses, // <-- Tổng số khóa học
+
+        transaction: {
+          // Giữ lại nếu bạn cần
+          gatewayTransactionId: tran.gatewayTransactionId,
+          status: tran.status,
+        },
+      };
+    });
 
     res.status(200).json({
       success: true,
       message: "Purchase history retrieved successfully",
-      data,
+      data, // data bây giờ chứa 'courses' (mảng) và 'totalCourses' (số)
       pagination: {
         currentPage: parseInt(page),
         totalPages,

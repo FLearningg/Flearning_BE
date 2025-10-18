@@ -10,7 +10,8 @@ const transactionSchema = new mongoose.Schema(
     paymentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Payment",
-      // required: true, // Có thể không required ngay lúc đầu nếu bạn tạo transaction trước
+      required: true,
+      index: true, // Thêm index để tìm kiếm nhanh
     },
     gatewayTransactionId: {
       type: String,

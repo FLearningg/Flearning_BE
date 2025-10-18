@@ -29,6 +29,10 @@ const UserSchema = new Schema(
       type: Date,
       select: false,
     },
+    moneyLeft: {
+      type: mongoose.Schema.Types.Decimal128,
+      default: 0.0,
+    },
   },
   { timestamps: true, collection: "users" }
 );
