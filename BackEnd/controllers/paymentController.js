@@ -227,9 +227,8 @@ const createPaymentLink = async (req, res) => {
       paymentDate: new Date(),
       amount: price,
       status: "pending",
-    });
+    }); // BƯỚC 3: Tạo Transaction và liên kết với Payment
 
-    // BƯỚC 3: Tạo Transaction và liên kết với Payment
     const transaction = new Transaction({
       userId,
       amount: price,
@@ -240,9 +239,8 @@ const createPaymentLink = async (req, res) => {
     });
 
     await newPayment.save({ session });
-    await transaction.save({ session });
+    await transaction.save({ session }); // BƯỚC 4: Tạo link PayOS
 
-    // BƯỚC 4: Tạo link PayOS
     const payosOrder = {
       amount: price,
       description: description,

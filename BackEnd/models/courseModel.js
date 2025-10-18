@@ -38,4 +38,10 @@ const CourseSchema = new Schema(
   { timestamps: true, collection: "courses" }
 );
 
+// Indexes for query optimization
+CourseSchema.index({ createdBy: 1 }); // For instructor course queries
+CourseSchema.index({ status: 1 }); // For filtering by status
+CourseSchema.index({ categoryIds: 1 }); // For filtering by category
+CourseSchema.index({ createdBy: 1, status: 1 }); // Compound index for instructor courses with status filter
+
 module.exports = mongoose.model("Course", CourseSchema);
