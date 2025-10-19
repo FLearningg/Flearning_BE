@@ -9,7 +9,7 @@ const Quiz = require("../models/QuizModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const Transaction = require("../models/transactionModel");
-const InstructorApplication = require("../models/instructorApplicationModel");
+const InstructorProfile = require("../models/instructorProfileModel");
 const {
   instructorApplicationApprovedEmail,
   instructorApplicationDeniedEmail,
@@ -2632,9 +2632,9 @@ exports.getInstructorRequests = async (req, res) => {
     // Build query object
     const query = {};
 
-    // Filter by status
+    // Filter by status (use applicationStatus instead of status)
     if (status) {
-      query.status = status;
+      query.applicationStatus = status;
     }
 
     // Build sort object
@@ -2645,17 +2645,17 @@ exports.getInstructorRequests = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // Execute query with pagination
-    const requests = await InstructorApplication.find(query)
+    const requests = await InstructorProfile.find(query)
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate("userId", "firstName lastName email")
+      .populate("userId", "firstName lastName email userImage")
       .select(
-        "firstName lastName email phone bio expertise experience bankName accountNumber accountHolderName documents status reviewedBy reviewedAt reviewNotes createdAt updatedAt"
+        "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt"
       );
 
     // Get total count for pagination
-    const totalRequests = await InstructorApplication.countDocuments(query);
+    const totalRequests = await InstructorProfile.countDocuments(query);
 
     // Calculate pagination info
     const totalPages = Math.ceil(totalRequests / parseInt(limit));
@@ -2699,26 +2699,32 @@ exports.approveInstructorRequest = async (req, res) => {
         .json({ success: false, message: "Application ID is required." });
     }
 
-    const application = await InstructorApplication.findById(applicationId);
+    const profile = await InstructorProfile.findById(applicationId).populate("userId");
 
-    if (!application) {
+    if (!profile) {
       return res
         .status(404)
-        .json({ success: false, message: "Instructor application not found." });
+        .json({ success: false, message: "Instructor profile not found." });
     }
 
-    application.status = "approved";
-    application.reviewedBy = req.user.id; // Assuming `req.user` contains the admin's info
-    application.reviewedAt = new Date();
+    // Update profile status
+    profile.applicationStatus = "approved";
+    profile.approvedAt = new Date();
+    await profile.save();
 
-    await application.save();
+    // Update user role to instructor
+    const user = await User.findById(profile.userId);
+    if (user) {
+      user.role = "instructor";
+      await user.save();
+    }
 
     // Send approval email
     const emailContent = instructorApplicationApprovedEmail(
-      application.firstName
+      profile.userId.firstName
     );
     await sendEmail(
-      application.email,
+      profile.userId.email,
       "Your Instructor Application is Approved!",
       emailContent
     );
@@ -2749,33 +2755,28 @@ exports.denyInstructorRequest = async (req, res) => {
         .json({ success: false, message: "Invalid request data." });
     }
 
-    const application = await InstructorApplication.findById(applicationId);
+    const profile = await InstructorProfile.findById(applicationId).populate("userId");
 
-    if (!application) {
+    if (!profile) {
       return res
         .status(404)
-        .json({ success: false, message: "Instructor application not found." });
+        .json({ success: false, message: "Instructor profile not found." });
     }
 
-    application.status = "rejected";
-    application.reviewedBy = req.user.id; // Assuming `req.user` contains the admin's info
-    application.reviewedAt = new Date();
-    application.reviewNotes = {
-      reasons,
-      customReason,
-    };
-
-    await application.save();
+    // Update profile status
+    profile.applicationStatus = "rejected";
+    profile.rejectedAt = new Date();
+    const reasonText = reasons.join(", ") + (customReason ? `: ${customReason}` : "");
+    profile.rejectionReason = reasonText;
+    await profile.save();
 
     // Send denial email
-    const reasonText =
-      reasons.join(", ") + (customReason ? `: ${customReason}` : "");
     const emailContent = instructorApplicationDeniedEmail(
-      application.firstName,
+      profile.userId.firstName,
       reasonText
     );
     await sendEmail(
-      application.email,
+      profile.userId.email,
       "Your Instructor Application is Denied",
       emailContent
     );
