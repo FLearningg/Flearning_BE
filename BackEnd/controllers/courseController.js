@@ -8,6 +8,10 @@ const section = require("../models/sectionModel");
 const Category = require("../models/categoryModel");
 const User = require("../models/userModel");
 const Enrollment = require("../models/enrollmentModel");
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const courseController = {
   /**
    * @desc    Lấy danh sách khóa học: Hỗ trợ lọc, sắp xếp và phân trang. Dùng cho các use case: View Courses, Filter, Sort.
@@ -16,13 +20,15 @@ const courseController = {
    */
   getAllCourses: async (req, res) => {
     try {
-      const courses = await Course.find()
+      // Thêm { status: "active" } vào hàm find()
+      const courses = await Course.find({ status: "active" })
         .populate("categoryIds") // Populate categoryId to get category details
         .populate("discountId")
         .populate("sections")
         .populate("createdBy", "firstName lastName"); // Populate createdBy to get instructor details
       if (!courses || courses.length === 0) {
-        return res.status(404).json({ message: "Not found courses" });
+        // Trả về 200 với mảng rỗng
+        return res.status(200).json([]);
       }
       res.status(200).json(courses);
     } catch (error) {
@@ -56,33 +62,89 @@ const courseController = {
     }
   },
   /**
-   * @desc    Lấy khóa học bán chạy: Lấy danh sách các khóa học hàng đầu.
-   * @route   GET api/courses/top-selling?limit=...
+   * @desc    Lấy khóa học bán chạy (đã cập nhật với filter category)
+   * @route   GET api/courses/top-selling?limit=...&category=...
    * @access  Public
    */
   getTopCourses: async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit) || 5; // Default to 5 if not provided
+      const limit = parseInt(req.query.limit) || 5;
+      const categoryName = req.query.category;
+
+      const matchStage = { status: "active" };
+
+      if (categoryName) {
+        const escapedCategoryName = escapeRegex(categoryName);
+
+        // 2. Tìm TẤT CẢ categories khớp (dùng .find() và regex)
+        const matchingCategories = await Category.find({
+          name: { $regex: escapedCategoryName, $options: "i" },
+        });
+
+        if (matchingCategories.length > 0) {
+          // 3. Lấy ID của tất cả categories tìm được
+          const categoryIds = matchingCategories.map((cat) => cat._id);
+
+          // 4. Lọc các khóa học có categoryId NẰM TRONG ($in) danh sách ID này
+          matchStage.categoryIds = { $in: categoryIds };
+        } else {
+          return res.status(200).json([]);
+        }
+      }
+
       const courses = await Course.aggregate([
         {
-          $addFields: {
-            studentsCount: { $size: { $ifNull: ["$studentsEnrolled", []] } },
+          $match: matchStage,
+        },
+
+        // Giai đoạn 2: "JOIN" với bảng enrollments
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "_id",
+            foreignField: "courseId",
+            pipeline: [{ $match: { status: "enrolled" } }],
+            as: "studentData",
           },
         },
-        { $sort: { studentsCount: -1 } }, // Sort by number of students enrolled desc
-        { $limit: limit }, // Limit to top N courses
+
+        // Giai đoạn 3: Tạo trường studentsCount
+        {
+          $addFields: {
+            studentsCount: { $size: "$studentData" },
+          },
+        },
+
+        // Giai đoạn 4 & 5: Sắp xếp và giới hạn
+        { $sort: { studentsCount: -1 } },
+        { $limit: limit },
+
+        // Giai đoạn 6: Xóa mảng tạm
+        {
+          $project: {
+            studentData: 0,
+          },
+        },
       ]);
-      // Populate all fields after aggregate
+
+      // Phần populate vẫn giữ nguyên
       const populatedCourses = await Course.populate(courses, [
         { path: "categoryIds" },
         { path: "discountId" },
         { path: "sections" },
       ]);
+
+      // --- SỬA LỖI (2) ---
+      // Nếu không tìm thấy khóa học nào (kể cả khi category đúng),
+      // cũng trả về 200 OK với mảng rỗng.
       if (!populatedCourses || populatedCourses.length === 0) {
-        return res.status(404).json({ message: "Not found top courses" });
+        return res.status(200).json([]);
       }
+
+      // Nếu mọi thứ OK và có data, trả về data
       res.status(200).json(populatedCourses);
     } catch (error) {
+      console.error("Error in getTopCourses:", error);
       res.status(500).json({ message: error.message });
     }
   },
@@ -224,4 +286,5 @@ const courseController = {
     }
   },
 };
+
 module.exports = courseController;
