@@ -15,6 +15,10 @@ const {
   deleteLesson,
   deleteLessonFile,
   updateLessonFile,
+  getMyProfile,
+  updateMyProfile,
+  getPublicProfile,
+  getInstructorStats,
 } = require("../controllers/instructorController");
 const authorize = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
@@ -26,7 +30,11 @@ const {
   moveFileFromTemporary,
 } = require("../controllers/firebaseController");
 
-// All instructor routes require instructor authorization
+// Public routes (no auth required)
+router.get("/public/:userId", getPublicProfile);
+router.get("/stats/:userId", getInstructorStats);
+
+// All instructor routes below require instructor authorization
 router.use(authorize("instructor"));
 
 // Dashboard stats route
@@ -34,6 +42,10 @@ router.get("/dashboard", getDashboardStats);
 
 // Categories route
 router.get("/categories", getAllCategories);
+
+// Profile routes
+router.get("/profile", getMyProfile);
+router.put("/profile", upload.single("avatar"), updateMyProfile);
 
 // Course management routes
 router.post("/courses", createCourse);
