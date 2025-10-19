@@ -16,6 +16,7 @@ const CategoryController = {
               {
                 $match: {
                   $expr: { $in: ["$$categoryId", "$categoryIds"] },
+                  status: "active", // Only include active courses
                 },
               },
             ],

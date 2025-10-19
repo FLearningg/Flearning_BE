@@ -1,15 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const publicRouter = express.Router();
+const instructorRouter = express.Router();
 const {
   getAllDiscounts,
+  getInstructorDiscounts,
   getDiscountById,
   createDiscount,
   updateDiscount,
-  deleteDiscount,
   getDiscountStats,
   getAvailableDiscounts, // Thêm controller mới
   increaseDiscountUsage, // Thêm controller tăng usage
+  getAvailableDiscountsForCourses, // Thêm controller cho specific courses
+  removeCourseFromDiscount, // Thêm controller xóa course khỏi discount
 } = require("../controllers/discountController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -49,11 +52,54 @@ router.get("/:discountId", authorize("admin"), getDiscountById);
 router.put("/:discountId", authorize("admin"), updateDiscount);
 
 /**
- * @route   DELETE /api/admin/discounts/:discountId
- * @desc    Delete discount by ID
+ * @route   DELETE /api/admin/discounts/:discountId/courses/:courseId
+ * @desc    Remove course from discount applyCourses
  * @access  Admin
  */
-router.delete("/:discountId", authorize("admin"), deleteDiscount);
+router.delete("/:discountId/courses/:courseId", authorize("admin"), removeCourseFromDiscount);
+
+/**
+ * INSTRUCTOR ROUTES
+ */
+
+/**
+ * @route   GET /api/instructor/discounts
+ * @desc    Get instructor's own discounts with filtering and pagination
+ * @access  Instructor
+ */
+instructorRouter.get("/", authorize("instructor"), getInstructorDiscounts);
+
+/**
+ * @route   POST /api/instructor/discounts
+ * @desc    Create new discount
+ * @access  Instructor
+ */
+instructorRouter.post("/", authorize("instructor"), createDiscount);
+
+/**
+ * @route   GET /api/instructor/discounts/:discountId
+ * @desc    Get single discount by ID
+ * @access  Instructor
+ */
+instructorRouter.get("/:discountId", authorize("instructor"), getDiscountById);
+
+/**
+ * @route   PUT /api/instructor/discounts/:discountId
+ * @desc    Update instructor's own discount by ID
+ * @access  Instructor
+ */
+instructorRouter.put("/:discountId", authorize("instructor"), updateDiscount);
+
+/**
+ * @route   DELETE /api/instructor/discounts/:discountId/courses/:courseId
+ * @desc    Remove course from instructor's discount applyCourses
+ * @access  Instructor
+ */
+instructorRouter.delete("/:discountId/courses/:courseId", authorize("instructor"), removeCourseFromDiscount);
+
+/**
+ * PUBLIC ROUTES
+ */
 
 /**
  * @route   GET /api/discounts/available
@@ -61,6 +107,13 @@ router.delete("/:discountId", authorize("admin"), deleteDiscount);
  * @access  Public
  */
 publicRouter.get("/available", getAvailableDiscounts);
+
+/**
+ * @route   POST /api/discounts/available-for-courses
+ * @desc    Get available discounts for specific courses (public)
+ * @access  Public
+ */
+publicRouter.post("/available-for-courses", getAvailableDiscountsForCourses);
 
 /**
  * @route   POST /api/discounts/:discountId/increase-usage
@@ -73,4 +126,8 @@ publicRouter.post(
   increaseDiscountUsage
 );
 
-module.exports = { adminRouter: router, publicRouter };
+module.exports = {
+  adminRouter: router,
+  instructorRouter,
+  publicRouter
+};

@@ -24,8 +24,8 @@ const courseController = {
       const courses = await Course.find({ status: "active" })
         .populate("categoryIds") // Populate categoryId to get category details
         .populate("discountId")
-        .populate("sections");
-      // Sửa lại logic 404
+        .populate("sections")
+        .populate("createdBy", "firstName lastName"); // Populate createdBy to get instructor details
       if (!courses || courses.length === 0) {
         // Trả về 200 với mảng rỗng
         return res.status(200).json([]);
@@ -157,7 +157,7 @@ const courseController = {
   getNewCourses: async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 5; // Default to 5 if not provided
-      const courses = await Course.find()
+      const courses = await Course.find({ status: "active" }) // Only fetch active courses
         .sort({ createdAt: -1 }) // Sort by creation date desc
         .limit(limit)
         .populate("categoryIds")

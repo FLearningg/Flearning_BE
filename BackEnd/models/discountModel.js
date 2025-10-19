@@ -14,6 +14,8 @@ const DiscountSchema = new Schema(
     maximumDiscount: { type: Number },
     startDate: { type: Date },
     endDate: { type: Date },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    applyCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }], // Array of courses this discount applies to
   },
   { timestamps: true, collection: "discounts" }
 );
