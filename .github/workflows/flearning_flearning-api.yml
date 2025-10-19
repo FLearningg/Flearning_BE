@@ -19,7 +19,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "20.x" # Đổi về 20.x cho giống với log lỗi ban đầu của bạn
+          node-version: '22.x'
 
       - name: Validate package.json
         working-directory: ./BackEnd
@@ -37,8 +37,7 @@ jobs:
       - name: Zip backend folder for deployment
         run: |
           cd BackEnd
-          # SỬA LỖI Ở ĐÂY: Không loại trừ node_modules nữa
-          zip -r ../release.zip . -x "*.git*" -x "*.github*"
+          zip -r ../release.zip . -x "*.git*" -x "*node_modules*" -x "*.github*"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -73,6 +72,6 @@ jobs:
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: "flearning-api"
-          slot-name: "Production"
+          app-name: 'flearning-api'
+          slot-name: 'Production'
           package: .
