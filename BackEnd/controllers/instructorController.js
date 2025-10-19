@@ -2261,8 +2261,11 @@ exports.getPublicProfile = async (req, res) => {
       });
     }
 
-    // Get instructor's courses
-    const courses = await Course.find({ createdBy: userId })
+    // Get instructor's courses - only active courses
+    const courses = await Course.find({ 
+      createdBy: userId,
+      status: "active"
+    })
       .select("title thumbnail price rating totalStudents")
       .limit(6);
 
