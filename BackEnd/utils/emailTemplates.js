@@ -295,7 +295,10 @@ exports.instructorApplicationApprovedEmail = (firstName) => {
         You can now log in to your account and start creating courses to share your knowledge with our learning community.
       </p>
       <div style="text-align: center; margin: 30px 0;">
-        ${button("https://f-learning.com/login", "Log In to Your Account")}
+        ${button(
+          "https://flearningg.vercel.app/login",
+          "Log In to Your Account"
+        )}
       </div>
       <p style="color: #595959; font-size: 16px; line-height: 1.6;">
         If you have any questions or need assistance, feel free to reach out to us at support@f-learning.com.

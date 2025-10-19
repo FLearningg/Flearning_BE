@@ -19,7 +19,8 @@ const courseController = {
       const courses = await Course.find()
         .populate("categoryIds") // Populate categoryId to get category details
         .populate("discountId")
-        .populate("sections");
+        .populate("sections")
+        .populate("createdBy", "firstName lastName"); // Populate createdBy to get instructor details
       if (!courses || courses.length === 0) {
         return res.status(404).json({ message: "Not found courses" });
       }
@@ -94,7 +95,7 @@ const courseController = {
   getNewCourses: async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 5; // Default to 5 if not provided
-      const courses = await Course.find()
+      const courses = await Course.find({ status: "active" }) // Only fetch active courses
         .sort({ createdAt: -1 }) // Sort by creation date desc
         .limit(limit)
         .populate("categoryIds")

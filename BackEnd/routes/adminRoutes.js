@@ -6,7 +6,6 @@ const {
   getUserById,
   updateUserStatus,
   getAllCourses,
-  createCourse,
   getCourseById,
   updateCourse,
   deleteCourse,
@@ -25,6 +24,12 @@ const {
   getInstructorRequests,
   approveInstructorRequest,
   denyInstructorRequest,
+  getPendingCourses,
+  approveCourse,
+  rejectCourse,
+  getCourseApprovalStats,
+  deactivateCourse,
+  reactivateCourse,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -50,12 +55,17 @@ router.get("/users/stats", getUserStats);
 router.get("/users/:id", getUserById);
 router.put("/users/:id/status", updateUserStatus);
 
-// Course management routes
+// Course management routes (Admin can view, update, delete, and approve/reject only)
 router.get("/courses", getAllCourses);
-router.post("/courses", createCourse);
+router.get("/courses/pending", getPendingCourses);
+router.get("/courses/approval-stats", getCourseApprovalStats);
 router.get("/courses/:courseId", getCourseById);
 router.put("/courses/:courseId", updateCourse);
 router.delete("/courses/:courseId", deleteCourse);
+router.post("/courses/:courseId/approve", approveCourse);
+router.post("/courses/:courseId/reject", rejectCourse);
+router.post("/courses/:courseId/deactivate", deactivateCourse);
+router.post("/courses/:courseId/reactivate", reactivateCourse);
 
 // Section management routes
 router.post("/courses/:courseId/sections", createSection);

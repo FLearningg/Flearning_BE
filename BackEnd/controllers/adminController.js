@@ -541,6 +541,7 @@ exports.getAllCourses = async (req, res) => {
       .populate("categoryIds", "name")
       .populate("discountId", "discountCode value type")
       .populate("sections", "name")
+      .populate("createdBy", "firstName lastName") // Populate createdBy to get instructor details
       .sort(sort);
 
     // Get total count for pagination
@@ -1207,7 +1208,8 @@ exports.getCourseById = async (req, res) => {
         },
       })
       .populate("categoryIds", "name")
-      .populate("discountId", "discountCode value type status");
+      .populate("discountId", "discountCode value type status")
+      .populate("createdBy", "firstName lastName"); // Only firstName and lastName
 
     if (!course) {
       return res.status(404).json({
@@ -2615,6 +2617,382 @@ exports.updateLessonFile = async (req, res) => {
 };
 
 /**
+ * @desc    Get all courses pending approval
+ * @route   GET /api/admin/courses/pending
+ * @access  Private (Admin only)
+ */
+exports.getPendingCourses = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search = "",
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    // Build query object - only pending courses
+    const query = { status: "pending" };
+
+    // Search functionality
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { subTitle: { $regex: search, $options: "i" } },
+        { "detail.description": { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Execute query with pagination
+    const courses = await Course.find(query)
+      .populate("categoryIds", "name")
+      .populate("createdBy", "firstName lastName email userImage")
+      .populate({
+        path: "sections",
+        populate: { path: "lessons" },
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get total count for pagination
+    const totalCourses = await Course.countDocuments(query);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCourses / parseInt(limit));
+    const hasNextPage = parseInt(page) < totalPages;
+    const hasPrevPage = parseInt(page) > 1;
+
+    // Get enrollment count for each course (should be 0 for pending courses)
+    const coursesWithEnrollmentCount = await Promise.all(
+      courses.map(async (course) => {
+        const enrollmentCount = await Enrollment.countDocuments({
+          courseId: course._id,
+        });
+        const courseObj = course.toObject();
+        return {
+          ...courseObj,
+          enrollmentCount,
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      data: coursesWithEnrollmentCount,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCourses,
+        hasNextPage,
+        hasPrevPage,
+        limit: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getPendingCourses:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Approve a course
+ * @route   POST /api/admin/courses/:courseId/approve
+ * @access  Private (Admin only)
+ */
+exports.approveCourse = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    // Find the course
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check if course is in pending status
+    if (course.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot approve course. Current status is: ${course.status}`,
+      });
+    }
+
+    // Update course status to active
+    course.status = "active";
+    course.approvedAt = new Date();
+    course.rejectionReason = undefined; // Clear any previous rejection reason
+    await course.save();
+
+    // Populate course details for response
+    const updatedCourse = await Course.findById(courseId)
+      .populate("categoryIds", "name")
+      .populate("createdBy", "firstName lastName email")
+      .populate({
+        path: "sections",
+        populate: { path: "lessons" },
+      });
+
+    res.status(200).json({
+      success: true,
+      message: "Course approved successfully",
+      data: updatedCourse,
+    });
+  } catch (error) {
+    console.error("Error in approveCourse:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Reject a course
+ * @route   POST /api/admin/courses/:courseId/reject
+ * @access  Private (Admin only)
+ */
+exports.rejectCourse = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { rejectionReason } = req.body;
+
+    // Validate rejection reason
+    if (!rejectionReason || rejectionReason.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason is required",
+      });
+    }
+
+    // Find the course
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check if course is in pending status
+    if (course.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot reject course. Current status is: ${course.status}`,
+      });
+    }
+
+    // Update course status to rejected
+    course.status = "rejected";
+    course.rejectedAt = new Date();
+    course.rejectionReason = rejectionReason.trim();
+    await course.save();
+
+    // Populate course details for response
+    const updatedCourse = await Course.findById(courseId)
+      .populate("categoryIds", "name")
+      .populate("createdBy", "firstName lastName email")
+      .populate({
+        path: "sections",
+        populate: { path: "lessons" },
+      });
+
+    res.status(200).json({
+      success: true,
+      message: "Course rejected successfully",
+      data: updatedCourse,
+    });
+  } catch (error) {
+    console.error("Error in rejectCourse:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get course approval statistics
+ * @route   GET /api/admin/courses/approval-stats
+ * @access  Private (Admin only)
+ */
+exports.getCourseApprovalStats = async (req, res) => {
+  try {
+    const [
+      pendingCount,
+      approvedCount,
+      rejectedCount,
+      draftCount,
+      totalCourses,
+    ] = await Promise.all([
+      Course.countDocuments({ status: "pending" }),
+      Course.countDocuments({ status: "active" }),
+      Course.countDocuments({ status: "rejected" }),
+      Course.countDocuments({ status: "draft" }),
+      Course.countDocuments(),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        draft: draftCount,
+        total: totalCourses,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getCourseApprovalStats:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Deactivate a course (set status to inactive)
+ * @route   POST /api/admin/courses/:courseId/deactivate
+ * @access  Private (Admin only)
+ */
+exports.deactivateCourse = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { reason } = req.body;
+
+    // Find the course
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check if course is currently active
+    if (course.status !== "active") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot deactivate course. Current status is: ${course.status}. Only active courses can be deactivated.`,
+      });
+    }
+
+    // Update course status to inactive
+    const updateData = {
+      status: "inactive",
+      deactivatedAt: new Date(),
+    };
+
+    if (reason) {
+      updateData.deactivationReason = reason;
+    }
+
+    await Course.updateOne({ _id: courseId }, { $set: updateData });
+
+    // Populate course details for response
+    const updatedCourse = await Course.findById(courseId)
+      .populate("categoryIds", "name")
+      .populate("createdBy", "firstName lastName email")
+      .populate({
+        path: "sections",
+        populate: { path: "lessons" },
+      });
+
+    res.status(200).json({
+      success: true,
+      message: "Course deactivated successfully",
+      data: updatedCourse,
+    });
+  } catch (error) {
+    console.error("Error in deactivateCourse:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Reactivate a course (set status back to active)
+ * @route   POST /api/admin/courses/:courseId/reactivate
+ * @access  Private (Admin only)
+ */
+exports.reactivateCourse = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    // Find the course
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check if course is currently inactive
+    if (course.status !== "inactive") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot reactivate course. Current status is: ${course.status}. Only inactive courses can be reactivated.`,
+      });
+    }
+
+    // Update course status to active
+    const updateData = {
+      status: "active",
+      deactivationReason: undefined, // Clear deactivation reason
+      reactivatedAt: new Date(),
+    };
+
+    await Course.updateOne({ _id: courseId }, { $set: updateData });
+
+    // Populate course details for response
+    const updatedCourse = await Course.findById(courseId)
+      .populate("categoryIds", "name")
+      .populate("createdBy", "firstName lastName email")
+      .populate({
+        path: "sections",
+        populate: { path: "lessons" },
+      });
+
+    res.status(200).json({
+      success: true,
+      message: "Course reactivated successfully",
+      data: updatedCourse,
+    });
+  } catch (error) {
+    console.error("Error in reactivateCourse:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * @desc    Get all instructor requests
  * @route   GET /api/admin/instructor-requests
  * @access  Private (Admin only)
@@ -2699,7 +3077,9 @@ exports.approveInstructorRequest = async (req, res) => {
         .json({ success: false, message: "Application ID is required." });
     }
 
-    const profile = await InstructorProfile.findById(applicationId).populate("userId");
+    const profile = await InstructorProfile.findById(applicationId).populate(
+      "userId"
+    );
 
     if (!profile) {
       return res
@@ -2755,7 +3135,9 @@ exports.denyInstructorRequest = async (req, res) => {
         .json({ success: false, message: "Invalid request data." });
     }
 
-    const profile = await InstructorProfile.findById(applicationId).populate("userId");
+    const profile = await InstructorProfile.findById(applicationId).populate(
+      "userId"
+    );
 
     if (!profile) {
       return res
@@ -2766,7 +3148,8 @@ exports.denyInstructorRequest = async (req, res) => {
     // Update profile status
     profile.applicationStatus = "rejected";
     profile.rejectedAt = new Date();
-    const reasonText = reasons.join(", ") + (customReason ? `: ${customReason}` : "");
+    const reasonText =
+      reasons.join(", ") + (customReason ? `: ${customReason}` : "");
     profile.rejectionReason = reasonText;
     await profile.save();
 

@@ -30,9 +30,15 @@ const CourseSchema = new Schema(
     sections: [{ type: Schema.Types.ObjectId, ref: "Section" }],
     status: {
       type: String,
-      enum: ["active", "inactive", "draft"],
-      default: "draft",
+      enum: ["active", "inactive", "draft", "pending", "rejected"],
+      default: "pending",
     },
+    rejectionReason: { type: String },
+    deactivationReason: { type: String },
+    approvedAt: { type: Date },
+    rejectedAt: { type: Date },
+    deactivatedAt: { type: Date },
+    reactivatedAt: { type: Date },
     materials: [MaterialSchema],
   },
   { timestamps: true, collection: "courses" }
