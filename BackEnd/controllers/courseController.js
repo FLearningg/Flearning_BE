@@ -132,6 +132,7 @@ const courseController = {
         { path: "categoryIds" },
         { path: "discountId" },
         { path: "sections" },
+        { path: "createdBy", select: "firstName lastName userImage" }, // Add instructor info
       ]);
 
       // --- SỬA LỖI (2) ---
@@ -162,7 +163,8 @@ const courseController = {
         .limit(limit)
         .populate("categoryIds")
         .populate("discountId")
-        .populate("sections");
+        .populate("sections")
+        .populate("createdBy", "firstName lastName userImage"); // Populate instructor info
       if (!courses || courses.length === 0) {
         return res.status(404).json({ message: "Not found new courses" });
       }
