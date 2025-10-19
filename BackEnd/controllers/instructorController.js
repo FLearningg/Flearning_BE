@@ -6,8 +6,14 @@ const Discount = require("../models/discountModel");
 const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
 const Quiz = require("../models/QuizModel");
+const InstructorProfile = require("../models/instructorProfileModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
+const fs = require("fs");
+const {
+  uploadUserAvatar,
+  deleteFromFirebase,
+} = require("../utils/firebaseStorage");
 
 /**
  * @desc    Get dashboard statistics for instructor
@@ -2066,3 +2072,308 @@ async function extractValidCategoryIds(reqBody) {
   
   return validCategories;
 }
+
+/**
+ * @desc    Get instructor's own profile
+ * @route   GET /api/instructor/profile
+ * @access  Private (Instructor only)
+ */
+exports.getMyProfile = async (req, res) => {
+  try {
+    let profile = await InstructorProfile.findOne({ userId: req.user._id })
+      .populate("userId", "firstName lastName email userImage");
+
+    // If profile doesn't exist, create a default one
+    if (!profile) {
+      profile = await InstructorProfile.create({
+        userId: req.user._id,
+        phone: req.user.phone || "",
+        expertise: [],
+        experience: "",
+        documents: [],
+        applicationStatus: "approved", // Since they're already an instructor
+        bio: "",
+        headline: "",
+        website: "",
+        socialLinks: {
+          linkedin: "",
+          twitter: "",
+          youtube: "",
+          facebook: "",
+        },
+      });
+
+      // Populate after creation
+      profile = await InstructorProfile.findById(profile._id)
+        .populate("userId", "firstName lastName email userImage");
+    }
+
+    res.status(200).json({
+      success: true,
+      data: profile,
+    });
+  } catch (error) {
+    console.error("Error fetching instructor profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Update instructor's own profile
+ * @route   PUT /api/instructor/profile
+ * @access  Private (Instructor only)
+ */
+exports.updateMyProfile = async (req, res) => {
+  try {
+    const {
+      phone,
+      bio,
+      headline,
+      website,
+      socialLinks,
+    } = req.body;
+
+    const profile = await InstructorProfile.findOne({ userId: req.user._id });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Instructor profile not found",
+      });
+    }
+
+    // Update fields
+    if (phone) profile.phone = phone;
+    if (bio !== undefined) profile.bio = bio;
+    if (headline !== undefined) profile.headline = headline;
+    if (website !== undefined) profile.website = website;
+    if (socialLinks) {
+      const parsedLinks = typeof socialLinks === 'string' ? JSON.parse(socialLinks) : socialLinks;
+      profile.socialLinks = { ...profile.socialLinks, ...parsedLinks };
+    }
+
+    // Handle avatar upload to Firebase if file is provided
+    if (req.file) {
+      let uploadedFilePath = null;
+      try {
+        uploadedFilePath = req.file.path;
+
+        // Verify file exists before upload
+        if (!fs.existsSync(uploadedFilePath)) {
+          throw new Error("Upload file not found");
+        }
+
+        // Get current user data to check for existing image
+        const currentUser = await User.findById(req.user._id);
+        
+        // Upload to Firebase Storage using uploadUserAvatar function
+        const uploadResult = await uploadUserAvatar(
+          uploadedFilePath,
+          req.file.originalname,
+          req.file.mimetype,
+          req.user._id,
+          currentUser.userName
+        );
+
+        // Delete old image if it exists
+        if (currentUser.userImage) {
+          try {
+            // Extract file path from URL (format: UserAvatar/...)
+            const urlParts = currentUser.userImage.split('/');
+            const filePathIndex = urlParts.findIndex(part => part === 'UserAvatar');
+            if (filePathIndex !== -1) {
+              const oldImagePath = urlParts.slice(filePathIndex).join('/');
+              await deleteFromFirebase(oldImagePath).catch((err) => {
+                console.warn("Failed to delete old image:", err.message);
+              });
+            }
+          } catch (deleteError) {
+            console.warn("Error deleting old image:", deleteError.message);
+          }
+        }
+
+        // Update user's avatar in User model
+        await User.findByIdAndUpdate(req.user._id, { userImage: uploadResult.url });
+
+        // Clean up temp file
+        if (fs.existsSync(uploadedFilePath)) {
+          fs.unlinkSync(uploadedFilePath);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading avatar:", uploadError);
+        
+        // Clean up temp file on error
+        if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
+          fs.unlinkSync(uploadedFilePath);
+        }
+        
+        return res.status(500).json({
+          success: false,
+          message: "Failed to upload avatar",
+          error: uploadError.message,
+        });
+      }
+    }
+
+    await profile.save();
+
+    // Re-fetch profile with populated userId to get updated avatar
+    const updatedProfile = await InstructorProfile.findById(profile._id)
+      .populate("userId", "firstName lastName email userImage");
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updatedProfile,
+    });
+  } catch (error) {
+    console.error("Error updating instructor profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get public instructor profile
+ * @route   GET /api/instructor/public/:userId
+ * @access  Public
+ */
+exports.getPublicProfile = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const profile = await InstructorProfile.findOne({ 
+      userId,
+      applicationStatus: "approved" // Only show approved instructors
+    }).populate("userId", "firstName lastName email userImage");
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Instructor profile not found or not approved",
+      });
+    }
+
+    // Get instructor's courses
+    const courses = await Course.find({ createdBy: userId })
+      .select("title thumbnail price rating totalStudents")
+      .limit(6);
+
+    // Calculate statistics
+    const totalStudents = await User.countDocuments({
+      enrolledCourses: { $in: courses.map(c => c._id) }
+    });
+
+    const response = {
+      user: profile.userId,
+      profile: {
+        bio: profile.bio,
+        headline: profile.headline,
+        website: profile.website,
+        socialLinks: profile.socialLinks,
+        expertise: profile.expertise,
+        experience: profile.experience,
+      },
+      statistics: {
+        totalCourses: profile.totalCourses,
+        totalStudents: totalStudents,
+        averageRating: profile.averageRating,
+        totalReviews: profile.totalReviews,
+      },
+      courses,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error fetching public instructor profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get instructor statistics
+ * @route   GET /api/instructor/stats/:userId
+ * @access  Public
+ */
+exports.getInstructorStats = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const profile = await InstructorProfile.findOne({ 
+      userId,
+      applicationStatus: "approved"
+    });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Instructor not found",
+      });
+    }
+
+    const courses = await Course.find({ createdBy: userId });
+    const courseIds = courses.map(c => c._id);
+
+    const [totalStudents, totalRevenue, courseRatings] = await Promise.all([
+      User.countDocuments({
+        enrolledCourses: { $in: courseIds }
+      }),
+      Transaction.aggregate([
+        {
+          $match: {
+            status: "completed",
+            courseId: { $in: courseIds }
+          }
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } }
+      ]),
+      Course.aggregate([
+        {
+          $match: {
+            createdBy: userId,
+            rating: { $exists: true, $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            averageRating: { $avg: "$rating" },
+            totalReviews: { $sum: "$totalReviews" }
+          }
+        }
+      ])
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCourses: courses.length,
+        totalStudents,
+        totalRevenue: totalRevenue[0]?.total || 0,
+        averageRating: courseRatings[0]?.averageRating || 0,
+        totalReviews: courseRatings[0]?.totalReviews || 0,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching instructor stats:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};

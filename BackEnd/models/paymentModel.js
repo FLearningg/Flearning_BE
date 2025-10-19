@@ -22,14 +22,9 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       default: "PayOS",
     },
-    transactionId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Transaction",
-      required: true,
-    },
     status: {
       type: String,
-      enum: ["pending", "completed", "failed", "refunded", "cancelled"],
+      enum: ["pending", "completed", "failed", "cancelled"],
       default: "pending",
     },
   },

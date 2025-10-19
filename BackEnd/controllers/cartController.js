@@ -18,6 +18,7 @@ const cartController = {
             { path: "categoryIds" },
             { path: "sections" },
             { path: "discountId" },
+            { path: "createdBy" },
           ],
         })
         .sort({ createdAt: -1 });

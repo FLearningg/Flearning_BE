@@ -5,6 +5,10 @@ const User = require("../models/userModel");
 const { APIError } = require("@payos/node"); // Biến này chưa được dùng, nhưng vẫn giữ lại
 const Payment = require("../models/paymentModel");
 const Enrollment = require("../models/enrollmentModel");
+const Cart = require("../models/cartModel");
+const Course = require("../models/courseModel");
+const { userEnrolledInCourseEmail } = require("../utils/emailTemplates");
+const sendEmail = require("../utils/sendEmail");
 
 // Bỏ WEB_URL vì không dùng
 // const WEB_URL = "http://localhost:3000";
@@ -159,21 +163,60 @@ const createPaymentLink = async (req, res) => {
   session.startTransaction();
 
   try {
-    // BƯỚC 1: Tạo các bản ghi Enrollment
-    const enrollmentPromises = courseIds.map((courseId) => {
-      const newEnrollment = new Enrollment({
+    // BƯỚC 1: Xử lý các bản ghi Enrollment (DÙNG VÒNG LẶP TUẦN TỰ)
+    const resultingEnrollments = []; // Tạo mảng trống để lưu kết quả
+
+    for (const courseId of courseIds) {
+      const existingEnrollment = await Enrollment.findOne({
         userId: userId,
         courseId: courseId,
-        status: "pending",
-      });
-      return newEnrollment.save({ session });
-    });
-    const newEnrollments = await Promise.all(enrollmentPromises);
-    const newEnrollmentIds = newEnrollments.map((e) => e._id);
+      }).session(session); // <-- Luôn .session(session) cho mọi query
+
+      if (existingEnrollment) {
+        // TÌNH HUỐNG 1: Đã tồn tại & bị hủy
+        if (existingEnrollment.status === "cancelled") {
+          console.log(
+            `[Payment] Kích hoạt lại enrollment 'cancelled' cho course: ${courseId}`
+          );
+          existingEnrollment.status = "pending";
+          const savedDoc = await existingEnrollment.save({ session }); // <-- Luôn .save({ session })
+          resultingEnrollments.push(savedDoc);
+        } // TÌNH HUỐNG 2: Đã tồn tại & đang chờ
+        else if (existingEnrollment.status === "pending") {
+          console.log(
+            `[Payment] Tái sử dụng enrollment 'pending' cho course: ${courseId}`
+          );
+          resultingEnrollments.push(existingEnrollment);
+        } // TÌNH HUỐNG 3: Đã sở hữu
+        else {
+          console.error(
+            `[Payment] LỖI: Người dùng ${userId} đã sở hữu course ${courseId}.`
+          );
+          const error = new Error(
+            `Bạn đã sở hữu khoá học (Course ID: ${courseId}).`
+          );
+          error.statusCode = 409;
+          throw error; // Ném lỗi sẽ bị bắt ở khối catch
+        }
+      } // TÌNH HUỐNG 4: Không tồn tại -> Tạo mới
+      else {
+        console.log(
+          `[Payment] Tạo mới enrollment 'pending' cho course: ${courseId}`
+        );
+        const newEnrollment = new Enrollment({
+          userId: userId,
+          courseId: courseId,
+          status: "pending",
+        });
+        const savedDoc = await newEnrollment.save({ session }); // <-- Luôn .save({ session })
+        resultingEnrollments.push(savedDoc);
+      }
+    } // Kết thúc vòng lặp for...of
+    const newEnrollmentIds = resultingEnrollments.map((e) => e._id); // BƯỚC 2: Tạo một Payment duy nhất
 
     const orderCode = parseInt(
       Date.now().toString() + Math.floor(Math.random() * 1000)
-    ); // BƯỚC 2: Tạo một Payment duy nhất
+    );
 
     const newPayment = new Payment({
       enrollmentIds: newEnrollmentIds,
@@ -190,8 +233,6 @@ const createPaymentLink = async (req, res) => {
       orderCode: orderCode,
       paymentId: newPayment._id,
     });
-
-    newPayment.transactionId = transaction._id;
 
     await newPayment.save({ session });
     await transaction.save({ session }); // BƯỚC 4: Tạo link PayOS
@@ -210,15 +251,20 @@ const createPaymentLink = async (req, res) => {
 
     const paymentLinkResponse = await payOs.paymentRequests.create(payosOrder);
 
-    await session.commitTransaction();
+    await session.commitTransaction(); // <-- Commit khi mọi thứ thành công
 
     res.status(200).json({
       message: "Tạo link thanh toán thành công",
       checkoutUrl: paymentLinkResponse.checkoutUrl,
     });
   } catch (error) {
-    await session.abortTransaction();
+    await session.abortTransaction(); // <-- Tự động abort nếu có lỗi
     console.error("Lỗi khi tạo link thanh toán:", error);
+
+    if (error.statusCode === 409) {
+      return res.status(409).json({ message: error.message });
+    }
+
     res.status(500).json({ message: "Không thể tạo link thanh toán." });
   } finally {
     session.endSession();
@@ -296,7 +342,105 @@ const handlePayOsWebhook = async (req, res) => {
             { $set: { status: "enrolled" } }
           );
           console.log("[WEBHOOK] Đã cập nhật xong các enrollment(s).");
-          console.log("[WEBHOOK] XỬ LÝ THÀNH CÔNG!");
+
+          // 4. Lấy dữ liệu 1 LẦN DUY NHẤT để dùng cho cả (5) và (6)
+          const enrollments = await Enrollment.find({
+            _id: { $in: payment.enrollmentIds },
+          })
+            .select("courseId")
+            .populate({
+              path: "courseId",
+              select: "createdBy price title", // Lấy ID giảng viên và GIÁ KHÓA HỌC
+            });
+
+          // 5. Cập nhật số tiền cho giảng viên (LOGIC ĐÃ SỬA)
+          try {
+            const earningsMap = new Map(); // Dùng Map để cộng dồn doanh thu cho mỗi giảng viên
+
+            for (const enrollment of enrollments) {
+              if (enrollment.courseId) {
+                const course = enrollment.courseId;
+                const teacherId = course.createdBy.toString();
+
+                // LỖI NGHIÊM TRỌNG ĐÃ SỬA: Tính 80% của GIÁ KHÓA HỌC, không phải tổng payment
+                const coursePrice = parseFloat(course.price.toString());
+                const revenueShare = coursePrice * 0.8;
+
+                // Cộng dồn doanh thu (nếu giảng viên có nhiều khóa học trong 1 giao dịch)
+                const currentEarnings = earningsMap.get(teacherId) || 0;
+                earningsMap.set(teacherId, currentEarnings + revenueShare);
+              }
+            }
+
+            // Tối ưu N+1 Query: Tạo mảng các promise
+            const updatePromises = [];
+            for (const [teacherId, totalRevenue] of earningsMap.entries()) {
+              console.log(
+                `[WEBHOOK] Chuẩn bị cập nhật +${totalRevenue} cho Giảng viên ID: ${teacherId}`
+              );
+              // Dùng $inc để cập nhật nguyên tử, an toàn và nhanh hơn find/save
+              updatePromises.push(
+                User.updateOne(
+                  { _id: teacherId },
+                  { $inc: { moneyLeft: totalRevenue } } // $inc sẽ tự động cộng dồn
+                )
+              );
+            }
+
+            // Chạy tất cả các lệnh cập nhật song song
+            await Promise.all(updatePromises);
+            console.log(
+              `[WEBHOOK] Đã cập nhật tiền cho ${earningsMap.size} giảng viên.`
+            );
+          } catch (moneyError) {
+            console.error(
+              "[WEBHOOK] Lỗi khi cập nhật số tiền cho giảng viên:",
+              moneyError
+            );
+          }
+
+          // 6. Xoá các khoá học đã mua khỏi giỏ hàng (Dùng lại 'enrollments')
+          try {
+            const courseIdsToRemove = enrollments.map((e) => e.courseId._id); // Lấy _id từ course đã populate
+            const userId = transaction.userId;
+
+            console.log(
+              `[WEBHOOK] Bắt đầu xóa ${courseIdsToRemove.length} khóa học khỏi giỏ hàng user: ${userId}`
+            );
+
+            const cart = await Cart.findOne({ userId: userId });
+            if (cart) {
+              const courseIdsStr = courseIdsToRemove.map((id) => id.toString());
+              cart.courseIds = cart.courseIds.filter(
+                (id) => !courseIdsStr.includes(id.toString())
+              );
+              await cart.save();
+              console.log("[WEBHOOK] Đã xóa các khóa học khỏi giỏ hàng.");
+            } else {
+              console.log(
+                `[WEBHOOK] Không tìm thấy giỏ hàng cho user: ${userId}.`
+              );
+            }
+          } catch (cartError) {
+            // Ghi lại lỗi nhưng không làm hỏng webhook
+            console.error(
+              "[WEBHOOK] Lỗi khi xóa giỏ hàng (nhưng thanh toán đã thành công):",
+              cartError
+            );
+          }
+          // 7. Gửi email thông báo ghi danh thành công cho từng khoá học
+          try {
+            // Lấy ID các khóa học từ 'enrollments' đã query
+            const courseIds = enrollments.map((e) => e.courseId._id); // Lấy userId từ transaction đã query
+            const userId = transaction.userId; // Gọi hàm gửi mail (không cần await để webhook trả về nhanh)
+
+            sendIndividualEnrollmentEmails(userId, courseIds);
+          } catch (emailError) {
+            console.error(
+              "[WEBHOOK] Giao dịch thành công nhưng gửi mail thất bại:",
+              emailError
+            );
+          }
         } else {
           console.error(
             `[WEBHOOK] LỖI: Không tìm thấy Payment tương ứng với Transaction ID: ${transaction._id}`
@@ -395,6 +539,57 @@ const cancelPayment = async (req, res) => {
   } catch (error) {
     console.error("Lỗi khi hủy đơn hàng:", error);
     res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+};
+
+const sendIndividualEnrollmentEmails = async (userId, courseIds) => {
+  try {
+    // 1. Lấy thông tin người dùng (email, tên) - CHỈ 1 LẦN
+    const user = await User.findById(userId).select("email fullName");
+
+    if (!user) {
+      console.log("[Email] Không tìm thấy người dùng, hủy gửi mail.");
+      return;
+    } // 2. Lấy thông tin các khóa học - CHỈ 1 LẦN // QUAN TRỌNG: Phải select 'title' và 'message.welcome'
+
+    const courses = await Course.find({ _id: { $in: courseIds } }).select(
+      "title message.welcome"
+    );
+
+    if (courses.length === 0) {
+      console.log("[Email] Không tìm thấy khóa học, hủy gửi mail.");
+      return;
+    } // 3. Lặp qua TỪNG khóa học và gửi email
+
+    for (const course of courses) {
+      try {
+        // 4. Tạo nội dung email từ template mới
+        const emailContent = userEnrolledInCourseEmail(
+          user.fullName,
+          course.title,
+          course.message.welcome // Truyền welcome message
+        );
+        console.log(course.message.welcome);
+
+        await sendEmail(
+          user.email,
+          `Chào mừng bạn đến với khóa học: ${course.title}!`, // Tiêu đề email riêng
+          emailContent
+        );
+      } catch (emailError) {
+        // Nếu lỗi 1 email, ghi log và tiếp tục gửi các email khác
+        console.error(
+          `[Email] Lỗi khi gửi mail cho course ${course._id} tới user ${userId}:`,
+          emailError
+        );
+      }
+    }
+  } catch (error) {
+    // Lỗi nghiêm trọng (không tìm thấy user, lỗi DB)
+    console.error(
+      `[Email] Lỗi nghiêm trọng khi chuẩn bị gửi email cho user ${userId}:`,
+      error
+    );
   }
 };
 
