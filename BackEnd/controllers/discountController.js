@@ -635,3 +635,114 @@ exports.increaseDiscountUsage = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+/**
+ * @desc    Get available discounts for specific courses
+ * @route   POST /api/discounts/available-for-courses
+ * @access  Public
+ */
+exports.getAvailableDiscountsForCourses = async (req, res) => {
+  try {
+    const { courseIds } = req.body;
+
+    if (!courseIds || !Array.isArray(courseIds) || courseIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of course IDs",
+      });
+    }
+
+    const now = new Date();
+
+    // Build filter for available discounts
+    const filter = {
+      status: "active",
+      $or: [
+        { usageLimit: 0 }, // unlimited usage
+        { $expr: { $lt: ["$usage", "$usageLimit"] } }, // usage < usageLimit
+      ],
+      $and: [
+        {
+          $or: [{ startDate: null }, { startDate: { $lte: now } }],
+        },
+        {
+          $or: [{ endDate: null }, { endDate: { $gte: now } }],
+        },
+        {
+          // Discount must have at least one course in applyCourses that matches courseIds
+          applyCourses: { $in: courseIds },
+        },
+      ],
+    };
+
+    const discounts = await Discount.find(filter)
+      .populate("userId", "name email")
+      .populate("applyCourses", "title price")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      message: "Get available discounts for courses successfully",
+      data: discounts,
+    });
+  } catch (error) {
+    console.error("Get available discounts for courses error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Remove course from discount applyCourses
+ * @route   DELETE /api/admin/discounts/:discountId/courses/:courseId
+ * @access  Admin
+ * @route   DELETE /api/instructor/discounts/:discountId/courses/:courseId
+ * @access  Instructor (only their own discounts)
+ */
+exports.removeCourseFromDiscount = async (req, res) => {
+  try {
+    const { discountId, courseId } = req.params;
+
+    // Check if discount exists
+    const discount = await Discount.findById(discountId);
+    if (!discount) {
+      return res.status(404).json({
+        success: false,
+        message: "Discount not found",
+      });
+    }
+
+    // Check ownership for instructors (admins can remove from any discount)
+    if (req.user.role === "instructor") {
+      if (discount.userId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to modify this discount",
+        });
+      }
+    }
+
+    // Remove course from applyCourses array
+    const updatedDiscount = await Discount.findByIdAndUpdate(
+      discountId,
+      { $pull: { applyCourses: courseId } },
+      { new: true }
+    ).populate("applyCourses", "title price");
+
+    res.status(200).json({
+      success: true,
+      message: "Course removed from discount successfully",
+      data: updatedDiscount,
+    });
+  } catch (error) {
+    console.error("Remove course from discount error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};

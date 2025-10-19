@@ -11,6 +11,8 @@ const {
   getDiscountStats,
   getAvailableDiscounts, // Thêm controller mới
   increaseDiscountUsage, // Thêm controller tăng usage
+  getAvailableDiscountsForCourses, // Thêm controller cho specific courses
+  removeCourseFromDiscount, // Thêm controller xóa course khỏi discount
 } = require("../controllers/discountController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -50,6 +52,13 @@ router.get("/:discountId", authorize("admin"), getDiscountById);
 router.put("/:discountId", authorize("admin"), updateDiscount);
 
 /**
+ * @route   DELETE /api/admin/discounts/:discountId/courses/:courseId
+ * @desc    Remove course from discount applyCourses
+ * @access  Admin
+ */
+router.delete("/:discountId/courses/:courseId", authorize("admin"), removeCourseFromDiscount);
+
+/**
  * INSTRUCTOR ROUTES
  */
 
@@ -82,6 +91,13 @@ instructorRouter.get("/:discountId", authorize("instructor"), getDiscountById);
 instructorRouter.put("/:discountId", authorize("instructor"), updateDiscount);
 
 /**
+ * @route   DELETE /api/instructor/discounts/:discountId/courses/:courseId
+ * @desc    Remove course from instructor's discount applyCourses
+ * @access  Instructor
+ */
+instructorRouter.delete("/:discountId/courses/:courseId", authorize("instructor"), removeCourseFromDiscount);
+
+/**
  * PUBLIC ROUTES
  */
 
@@ -91,6 +107,13 @@ instructorRouter.put("/:discountId", authorize("instructor"), updateDiscount);
  * @access  Public
  */
 publicRouter.get("/available", getAvailableDiscounts);
+
+/**
+ * @route   POST /api/discounts/available-for-courses
+ * @desc    Get available discounts for specific courses (public)
+ * @access  Public
+ */
+publicRouter.post("/available-for-courses", getAvailableDiscountsForCourses);
 
 /**
  * @route   POST /api/discounts/:discountId/increase-usage
