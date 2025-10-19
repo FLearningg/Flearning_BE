@@ -306,3 +306,33 @@ exports.instructorApplicationApprovedEmail = (firstName) => {
 
   return emailWrapper(content);
 };
+
+/**
+ * User enrolled in course email
+ */
+exports.userEnrolledInCourseEmail = (userName, courseName, welcomeMessage) => {
+  const content = `
+    ${emailHeader(`Welcome to ${courseName}`)}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Congratulations!</h2>
+      <p style="color: #595959; font-size: 32px; line-height: 1.6;">
+        ${welcomeMessage}
+      </p>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        We are thrilled to inform you that your request to enroll in the course "${courseName}" has been approved! 🎉
+      </p>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        You can now log in to your account and start accessing the course materials.
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button("https://f-learning.com/login", "Log In to Your Account")}
+      </div>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        If you have any questions or need assistance, feel free to reach out to us at support@f-learning.com.
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
