@@ -2,6 +2,7 @@ const Progress = require("../models/progressModel");
 const Course = require("../models/courseModel");
 const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
+const Enrollment = require("../models/enrollmentModel");
 
 /**
  * @desc    Get course progress for a user
@@ -13,9 +14,14 @@ const getCourseProgress = async (req, res) => {
     const { courseId } = req.params;
     const userId = req.user.id;
 
-    // Check if user is enrolled in the course using User.enrolledCourses
-    const user = await require("../models/userModel").findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment model
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: "enrolled"
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         success: false,
         message: "You are not enrolled in this course",
@@ -89,9 +95,14 @@ const markLessonCompleted = async (req, res) => {
     const { courseId, lessonId } = req.params;
     const userId = req.user.id;
 
-    // Check if user is enrolled in the course using User.enrolledCourses
-    const user = await require("../models/userModel").findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment model
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: "enrolled"
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         success: false,
         message: "You are not enrolled in this course",
@@ -203,9 +214,12 @@ const getAllCoursesProgress = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get all enrolled courses from User.enrolledCourses
-    const user = await require("../models/userModel").findById(userId).populate({
-      path: "enrolledCourses",
+    // Get all enrolled courses from Enrollment model
+    const enrollments = await Enrollment.find({
+      userId: userId,
+      status: "enrolled"
+    }).populate({
+      path: "courseId",
       select: "title thumbnail sections",
       populate: {
         path: "sections",
@@ -216,7 +230,7 @@ const getAllCoursesProgress = async (req, res) => {
       },
     });
 
-    if (!user || !user.enrolledCourses || user.enrolledCourses.length === 0) {
+    if (!enrollments || enrollments.length === 0) {
       return res.status(200).json({
         success: true,
         data: [],
@@ -226,7 +240,12 @@ const getAllCoursesProgress = async (req, res) => {
 
     const coursesProgress = [];
 
-    for (const course of user.enrolledCourses) {
+    for (const enrollment of enrollments) {
+      const course = enrollment.courseId;
+      
+      // Skip if course is null (data integrity issue)
+      if (!course) continue;
+
       // Count total lessons
       const totalLessons = course.sections.reduce((total, section) => {
         return total + (section.lessons ? section.lessons.length : 0);
@@ -250,6 +269,7 @@ const getAllCoursesProgress = async (req, res) => {
         completedLessons,
         totalLessons,
         progressPercentage,
+        enrolledAt: enrollment.createdAt,
       });
     }
 
@@ -275,9 +295,12 @@ const getCompletedCourses = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get all enrolled courses from User.enrolledCourses
-    const user = await require("../models/userModel").findById(userId).populate({
-      path: "enrolledCourses",
+    // Get all enrolled courses from Enrollment model
+    const enrollments = await Enrollment.find({
+      userId: userId,
+      status: "enrolled"
+    }).populate({
+      path: "courseId",
       select: "title thumbnail sections",
       populate: {
         path: "sections",
@@ -288,7 +311,7 @@ const getCompletedCourses = async (req, res) => {
       },
     });
 
-    if (!user || !user.enrolledCourses || user.enrolledCourses.length === 0) {
+    if (!enrollments || enrollments.length === 0) {
       return res.status(200).json({
         success: true,
         data: [],
@@ -298,7 +321,12 @@ const getCompletedCourses = async (req, res) => {
 
     const completedCourses = [];
 
-    for (const course of user.enrolledCourses) {
+    for (const enrollment of enrollments) {
+      const course = enrollment.courseId;
+      
+      // Skip if course is null (data integrity issue)
+      if (!course) continue;
+
       // Count total lessons
       const totalLessons = course.sections.reduce((total, section) => {
         return total + (section.lessons ? section.lessons.length : 0);
@@ -328,6 +356,7 @@ const getCompletedCourses = async (req, res) => {
           totalLessons,
           progressPercentage: 100,
           completedDate: progress ? progress.updatedAt : null,
+          enrolledAt: enrollment.createdAt,
         });
       }
     }
@@ -359,9 +388,12 @@ const getIncompleteCourses = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get all enrolled courses from User.enrolledCourses
-    const user = await require("../models/userModel").findById(userId).populate({
-      path: "enrolledCourses",
+    // Get all enrolled courses from Enrollment model
+    const enrollments = await Enrollment.find({
+      userId: userId,
+      status: "enrolled"
+    }).populate({
+      path: "courseId",
       select: "title thumbnail sections",
       populate: {
         path: "sections",
@@ -372,7 +404,7 @@ const getIncompleteCourses = async (req, res) => {
       },
     });
 
-    if (!user || !user.enrolledCourses || user.enrolledCourses.length === 0) {
+    if (!enrollments || enrollments.length === 0) {
       return res.status(200).json({
         success: true,
         data: [],
@@ -382,7 +414,12 @@ const getIncompleteCourses = async (req, res) => {
 
     const incompleteCourses = [];
 
-    for (const course of user.enrolledCourses) {
+    for (const enrollment of enrollments) {
+      const course = enrollment.courseId;
+      
+      // Skip if course is null (data integrity issue)
+      if (!course) continue;
+
       // Count total lessons
       const totalLessons = course.sections.reduce((total, section) => {
         return total + (section.lessons ? section.lessons.length : 0);
@@ -412,8 +449,7 @@ const getIncompleteCourses = async (req, res) => {
           totalLessons,
           progressPercentage,
           remainingLessons: totalLessons - completedLessons,
-          // enrollmentDate and lastUpdated are not available from User.enrolledCourses, so omit or set to null
-          enrollmentDate: null,
+          enrollmentDate: enrollment.createdAt,
           lastUpdated: progress ? progress.updatedAt : null,
         });
       }
@@ -452,9 +488,14 @@ const getCompletedLessonsDetails = async (req, res) => {
     const { courseId } = req.params;
     const userId = req.user.id;
 
-    // Check if user is enrolled in the course
-    const user = await require("../models/userModel").findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment model
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: "enrolled"
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         success: false,
         message: "You are not enrolled in this course",

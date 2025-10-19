@@ -16,6 +16,7 @@ const CategoryController = {
               {
                 $match: {
                   $expr: { $in: ["$$categoryId", "$categoryIds"] },
+                  status: "active", // Only include active courses
                 },
               },
             ],
@@ -38,6 +39,24 @@ const CategoryController = {
           },
         },
       ]);
+      if (!categories || categories.length === 0) {
+        return res.status(404).json({ message: "Không tìm thấy danh mục nào" });
+      }
+      res.status(200).json(categories);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+  /**
+   * @desc    Get all categories (public)
+   * @route   GET /api/categories
+   * @access  Public
+   */
+  getAllCategories: async (req, res) => {
+    try {
+      const categories = await Category.find({}, { name: 1, icon: 1 }).sort({
+        name: 1,
+      });
       if (!categories || categories.length === 0) {
         return res.status(404).json({ message: "Không tìm thấy danh mục nào" });
       }

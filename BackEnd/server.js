@@ -12,6 +12,8 @@ const userRoutes = require("./routes/userRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const instructorRoutes = require("./routes/instructorRoutes");
+const publicRoutes = require("./routes/publicRoutes");
 
 const courseRoutes = require("./routes/courseRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
@@ -20,6 +22,7 @@ const cartRoutes = require("./routes/cartRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
 const {
   adminRouter: discountAdminRouter,
+  instructorRouter: discountInstructorRouter,
   publicRouter: discountPublicRouter,
 } = require("./routes/discountRoutes");
 const chatRoutes = require("./routes/chatRoutes");
@@ -28,6 +31,7 @@ const chatbotRoutes = require("./routes/chatbotRoutes");
 const progressRoutes = require("./routes/progressRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const watchCourseRoute = require("./routes/WatchCourseRoute");
+const quizRoutes = require("./routes/quizRoutes");
 
 const app = express();
 
@@ -112,6 +116,7 @@ app.use(
 );
 app.use(
   express.json({
+    limit: '50mb', // Increase payload limit for large quiz data
     // Chúng ta cần giữ lại raw body để xác thực webhook
     verify: (req, res, buf) => {
       // Chỉ lưu lại rawBody cho các request đến webhook của PayOS
@@ -121,6 +126,7 @@ app.use(
     },
   })
 );
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
 console.log("✅ [SERVER] Middleware configured");
@@ -152,8 +158,14 @@ app.use("/api/user", userRoutes);
 app.use("/api/courses", feedbackRoutes);
 app.use("/api/profile", profileRoutes);
 
+// Public routes (no auth required)
+app.use("/api/public", publicRoutes);
+
 // Admin routes (includes section, lesson management and file upload)
 app.use("/api/admin", adminRoutes);
+
+// Instructor routes
+app.use("/api/instructor", instructorRoutes);
 
 // Course routes
 app.use("/api/courses", courseRoutes);
@@ -175,6 +187,7 @@ app.use("/api/conversations", conversationRoutes);
 
 // Discount routes
 app.use("/api/admin/discounts", discountAdminRouter);
+app.use("/api/instructor/discounts", discountInstructorRouter);
 app.use("/api/discounts", discountPublicRouter);
 // Profile routes
 app.use("/api/profile", profileRoutes);
@@ -185,6 +198,8 @@ app.use("/api/progress", progressRoutes);
 //Payment routes
 app.use("/api/payment", paymentRoutes);
 app.use("/api/watch-course", watchCourseRoute);
+// Quiz routes
+app.use("/api/quiz", quizRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 

@@ -1,6 +1,7 @@
 const Feedback = require("../models/feedbackModel");
 const Course = require("../models/courseModel");
 const User = require("../models/userModel");
+const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 
 /**
@@ -97,9 +98,14 @@ exports.createCourseFeedback = async (req, res) => {
       return res.status(404).json({ message: "Course not found." });
     }
 
-    // Check if user is enrolled in the course using User.enrolledCourses
-    const user = await User.findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment table
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: { $in: ["enrolled", "completed"] }
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         message: "You must be enrolled in this course to give feedback.",
       });
@@ -125,6 +131,18 @@ exports.createCourseFeedback = async (req, res) => {
     });
 
     await newFeedback.save();
+
+    // Calculate and update course rating
+    const allFeedback = await Feedback.find({ courseId: courseId });
+    const averageRating =
+      allFeedback.length > 0
+        ? allFeedback.reduce((sum, fb) => sum + fb.rateStar, 0) / allFeedback.length
+        : 0;
+
+    // Update course rating
+    await Course.findByIdAndUpdate(courseId, {
+      rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
+    });
 
     // Populate user information for response
     const populatedFeedback = await Feedback.findById(newFeedback._id).populate(
@@ -165,9 +183,14 @@ exports.updateCourseFeedback = async (req, res) => {
       return res.status(400).json({ message: "Invalid course ID." });
     }
 
-    // Check if user is enrolled in the course using User.enrolledCourses
-    const user = await User.findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment table
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: { $in: ["enrolled", "completed"] }
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         message: "You must be enrolled in this course to update feedback.",
       });
@@ -188,6 +211,18 @@ exports.updateCourseFeedback = async (req, res) => {
     feedback.content = content ? content.trim() : undefined;
     feedback.rateStar = parseInt(rateStar);
     await feedback.save();
+
+    // Calculate and update course rating
+    const allFeedback = await Feedback.find({ courseId: courseId });
+    const averageRating =
+      allFeedback.length > 0
+        ? allFeedback.reduce((sum, fb) => sum + fb.rateStar, 0) / allFeedback.length
+        : 0;
+
+    // Update course rating
+    await Course.findByIdAndUpdate(courseId, {
+      rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
+    });
 
     // Populate user information for response
     const populatedFeedback = await Feedback.findById(feedback._id).populate(
@@ -225,9 +260,14 @@ exports.deleteCourseFeedback = async (req, res) => {
       return res.status(400).json({ message: "Invalid feedback ID." });
     }
 
-    // Check if user is enrolled in the course using User.enrolledCourses
-    const user = await User.findById(userId).select("enrolledCourses");
-    if (!user || !user.enrolledCourses.some(cid => cid.toString() === courseId)) {
+    // Check if user is enrolled in the course using Enrollment table
+    const enrollment = await Enrollment.findOne({
+      userId: userId,
+      courseId: courseId,
+      status: { $in: ["enrolled", "completed"] }
+    });
+
+    if (!enrollment) {
       return res.status(403).json({
         message: "You must be enrolled in this course to delete feedback.",
       });
@@ -249,6 +289,18 @@ exports.deleteCourseFeedback = async (req, res) => {
 
     // Delete the feedback
     await Feedback.findByIdAndDelete(feedbackId);
+
+    // Recalculate and update course rating after deletion
+    const allFeedback = await Feedback.find({ courseId: courseId });
+    const averageRating =
+      allFeedback.length > 0
+        ? allFeedback.reduce((sum, fb) => sum + fb.rateStar, 0) / allFeedback.length
+        : 0;
+
+    // Update course rating
+    await Course.findByIdAndUpdate(courseId, {
+      rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
+    });
 
     res.status(200).json({ message: "Feedback deleted successfully." });
   } catch (error) {

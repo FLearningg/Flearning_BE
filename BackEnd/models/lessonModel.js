@@ -51,4 +51,13 @@ LessonSchema.pre("validate", function (next) {
   return next();
 });
 
+// Virtual field for backward compatibility with frontend expecting videoUrl
+LessonSchema.virtual("videoUrl").get(function () {
+  return this.materialUrl;
+});
+
+// Ensure virtual fields are included when converting to JSON
+LessonSchema.set("toJSON", { virtuals: true });
+LessonSchema.set("toObject", { virtuals: true });
+
 module.exports = mongoose.model("Lesson", LessonSchema);

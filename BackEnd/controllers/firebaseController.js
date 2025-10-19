@@ -38,6 +38,10 @@ const detectFolderType = (fieldname, mimetype, originalname, fileType) => {
       material: "section-data",
       sectiondata: "section-data",
       "section-data": "section-data",
+      "instructor-document": "instructor-documents",
+      "instructor-documents": "instructor-documents",
+      document: "instructor-documents",
+      documents: "instructor-documents",
     };
 
     const detectedType = fileTypeMap[fileType.toLowerCase()];
@@ -98,6 +102,7 @@ const detectFromFieldName = (fieldname) => {
     case "material":
     case "file": // Common field name, check other factors
       return "section-data";
+
     default:
       return "general";
   }
@@ -164,6 +169,68 @@ const detectFromFilename = (filename) => {
 };
 
 /**
+ * @desc    Upload file to Firebase Storage (PUBLIC - no auth required)
+ * @route   POST /api/public/upload
+ * @access  Public
+ */
+exports.uploadToFirebasePublic = async (req, res) => {
+  let tempFilePath = null;
+
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const { path: filePath, originalname, mimetype } = req.file;
+    const { fileType } = req.body;
+
+    // Store temp file path for cleanup
+    tempFilePath = filePath;
+
+    // Only allow instructor-documents for public upload
+    if (fileType !== "instructor-document") {
+      return res.status(400).json({
+        message: "Invalid file type. Only instructor-document is allowed for public upload.",
+      });
+    }
+
+    // Upload to instructor-documents folder
+    const result = await uploadToFirebaseStorage(
+      filePath,
+      originalname,
+      mimetype,
+      null,
+      "instructor-documents"
+    );
+
+    if (result.error) {
+      return res.status(500).json({ message: result.error });
+    }
+
+    // Return the URL
+    return res.json({
+      success: true,
+      url: result.url,
+      fileName: result.fileName,
+      destination: result.destination,
+      folderType: result.folderType,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  } finally {
+    // Always clean up temporary file
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (cleanupError) {
+        console.error("Failed to cleanup temp file:", cleanupError.message);
+      }
+    }
+  }
+};
+
+/**
  * @desc    Upload file to Firebase Storage with specific folder type
  * @route   POST /api/admin/upload
  * @access  Private (Admin only)
@@ -185,6 +252,7 @@ exports.uploadToFirebase = async (req, res) => {
       "trailer",
       "thumbnail",
       "section-data",
+      "instructor-documents",
       "general",
     ];
 
@@ -297,6 +365,17 @@ exports.uploadToFirebase = async (req, res) => {
             "section-data"
           );
         }
+        break;
+
+      case "instructor-documents":
+        // Upload instructor documents to a general folder (not course-specific)
+        result = await uploadToFirebaseStorage(
+          filePath,
+          originalname,
+          mimetype,
+          null,
+          "instructor-documents"
+        );
         break;
 
       // Handle new folder structure: section_1/lesson_1, section_2/lesson_1, etc.

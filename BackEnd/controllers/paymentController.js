@@ -2,75 +2,22 @@ const Transaction = require("../models/transactionModel");
 const mongoose = require("mongoose");
 const payOs = require("../config/payos");
 const User = require("../models/userModel");
-const { APIError } = require("@payos/node");
+const { APIError } = require("@payos/node"); // Biến này chưa được dùng, nhưng vẫn giữ lại
 const Payment = require("../models/paymentModel");
 const Enrollment = require("../models/enrollmentModel");
-const crypto = require("crypto");
+const Cart = require("../models/cartModel");
+const Course = require("../models/courseModel");
 
-const WEB_URL = "http://localhost:3000";
-
-function sortObjectForSignature(obj) {
-  if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map((it) => sortObjectForSignature(it));
-  if (typeof obj !== "object") return obj;
-
-  const keys = Object.keys(obj).sort();
-  const out = {};
-  for (const k of keys) {
-    out[k] = sortObjectForSignature(obj[k]);
-  }
-  return out;
-}
-
-function objectToQueryString(obj, prefix = "") {
-  const result = [];
-  const sortedKeys = Object.keys(obj).sort();
-
-  for (const key of sortedKeys) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      const fullKey = prefix ? `${prefix}[${key}]` : key;
-      const value = obj[key];
-      if (value === null || value === undefined) {
-        result.push(`${fullKey}=`);
-        continue;
-      }
-      if (Array.isArray(value)) {
-        value.forEach((item, index) => {
-          if (item === null || item === undefined) {
-            result.push(`${fullKey}[${index}]=`);
-          } else if (typeof item === "object") {
-            const sorted = sortObjectForSignature(item);
-            result.push(`${fullKey}[${index}]=${JSON.stringify(sorted)}`);
-          } else {
-            result.push(`${fullKey}[${index}]=${String(item)}`);
-          }
-        });
-      } else if (typeof value === "object") {
-        result.push(...objectToQueryString(value, fullKey));
-      } else {
-        result.push(`${fullKey}=${String(value)}`);
-      }
-    }
-  }
-  return result;
-}
-
-function createSignature(data) {
-  const dataQueries = objectToQueryString(data);
-  const sortedQueries = dataQueries.sort();
-  const dataString = sortedQueries.join("&");
-  return crypto
-    .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
-    .update(dataString)
-    .digest("hex");
-}
+// Bỏ WEB_URL vì không dùng
+// const WEB_URL = "http://localhost:3000";
 
 /**
- * @desc    Proxy API to fetch VietQR payment info (e.g., QR code for payment) [Abandoned]
- * @route   GET /api/payments/transactions
- * @access  Private
+ * @desc    Proxy API to fetch VietQR payment info (e.g., QR code for payment) [Abandoned]
+ * @route   GET /api/payments/transactions
+ * @access  Private
  */
 const vietQrPayment = async (req, res) => {
+  // ... (Giữ nguyên, không thay đổi)
   try {
     const response = await fetch(process.env.QR_API_URL, {
       headers: {
@@ -87,72 +34,120 @@ const vietQrPayment = async (req, res) => {
   }
 };
 
+// ***** START: HÀM ĐÃ ĐƯỢC SỬA LẠI HOÀN TOÀN *****
 /**
- * @desc    Add a new payment transaction (used after successful payment) [Abandoned]
- * @route   POST /api/payments/transactions
- * @access  Private
+ * @desc    Thêm giao dịch (từ luồng quét QR cũ - QRCodePayment.jsx)
+ * @desc    Hàm này được REFACTOR để tương thích với logic Mongoose Transaction mới,
+ * @desc    tạo ra Enrollment, Payment, và Transaction giống như webhook thành công.
+ * @route   POST /api/payments/transactions
+ * @access  Private (Đã thêm authorize() trong file routes)
  */
 const addTransaction = async (req, res) => {
-  try {
-    const {
-      userId,
-      gatewayTransactionId,
-      type,
-      amount,
-      currency,
-      description,
-      courseId,
-    } = req.body;
+  const {
+    userId,
+    paymentId, // Đây là "Mã GD" của ngân hàng (từ saveTransactionToDB)
+    amount,
+    description,
+    courseId, // Đây là mảng các course ID
+  } = req.body; // Kiểm tra các trường bắt buộc
 
-    if (
-      !userId ||
-      !amount ||
-      !type ||
-      !currency ||
-      !courseId ||
-      !Array.isArray(courseId) ||
-      courseId.length === 0
-    ) {
-      return res.status(400).json({
-        message:
-          "Missing required fields. `courseId` must be a non-empty array.",
+  if (
+    !userId ||
+    !amount ||
+    !courseId ||
+    !Array.isArray(courseId) ||
+    courseId.length === 0 ||
+    !paymentId
+  ) {
+    // Quan trọng: kiểm tra Mã GD ngân hàng
+    return res.status(400).json({
+      message:
+        "Thiếu các trường bắt buộc: `userId`, `amount`, `paymentId` (Mã GD), và `courseId` (mảng không rỗng).",
+    });
+  } // Bắt đầu một Mongoose session (database transaction)
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Kiểm tra giao dịch trùng lặp bằng Mã GD của ngân hàng
+    // Chúng ta lưu Mã GD vào trường 'gatewayTransactionId'
+    const existingTransaction = await Transaction.findOne({
+      gatewayTransactionId: paymentId,
+    }).session(session);
+
+    if (existingTransaction) {
+      await session.abortTransaction();
+      session.endSession();
+      return res
+        .status(409)
+        .json({ message: "Giao dịch đã được xử lý trước đó." });
+    } // BƯỚC 1: Tạo các Enrollment (trạng thái "enrolled" vì đã thanh toán)
+
+    const enrollmentPromises = courseId.map((id) => {
+      const newEnrollment = new Enrollment({
+        userId: userId,
+        courseId: id,
+        status: "enrolled", // Ghi danh luôn
       });
-    }
+      return newEnrollment.save({ session });
+    });
+    const newEnrollments = await Promise.all(enrollmentPromises);
+    const newEnrollmentIds = newEnrollments.map((e) => e._id); // Tạo orderCode (giống như luồng PayOS)
+
+    const orderCode = parseInt(
+      Date.now().toString() + Math.floor(Math.random() * 1000)
+    ); // BƯỚC 2: Tạo Payment (trạng thái "completed")
+
+    const newPayment = new Payment({
+      enrollmentIds: newEnrollmentIds,
+      paymentDate: new Date(),
+      amount: amount,
+      status: "completed", // Hoàn thành luôn
+    }); // BƯỚC 3: Tạo Transaction (trạng thái "completed")
 
     const newTransaction = new Transaction({
-      userId: new mongoose.Types.ObjectId(userId),
-      gatewayTransactionId,
-      type,
-      amount,
-      currency,
-      status: "completed",
-      description,
-      courseId,
-    });
+      userId,
+      amount: amount,
+      status: "completed", // Hoàn thành luôn
+      description: description,
+      orderCode: orderCode, // Tạo orderCode mới
+      paymentId: newPayment._id, // Link tới Payment
+      gatewayTransactionId: paymentId, // Lưu Mã GD ngân hàng vào đây
+    }); // Gán ngược lại transactionId cho payment
 
-    await newTransaction.save();
+    newPayment.transactionId = newTransaction._id; // Lưu cả hai vào DB
+
+    await newPayment.save({ session });
+    await newTransaction.save({ session }); // Commit database transaction
+
+    await session.commitTransaction();
 
     return res.status(201).json({
-      message: "Transaction added successfully.",
+      message: "Thêm giao dịch và ghi danh thành công.",
       transaction: newTransaction,
     });
   } catch (err) {
-    console.error("Error adding transaction:", err);
+    // Nếu lỗi, hủy bỏ mọi thay đổi
+    await session.abortTransaction();
+    console.error("Lỗi khi thêm giao dịch thủ công:", err);
     if (err.code === 11000) {
-      return res
-        .status(409)
-        .json({ message: "Duplicate gatewayTransactionId." });
+      return res.status(409).json({
+        message: "Lỗi trùng lặp (orderCode hoặc gatewayTransactionId).",
+      });
     }
-    res.status(500).json({ message: "Server error.", error: err.message });
+    res.status(500).json({ message: "Lỗi máy chủ.", error: err.message });
+  } finally {
+    // Luôn kết thúc session
+    session.endSession();
   }
 };
+// ***** END: HÀM ĐÃ ĐƯỢC SỬA LẠI HOÀN TOÀN *****
 
 /**
- * @desc    Tạo link thanh toán PayOS để nâng cấp tài khoản hoặc mua gói dịch vụ.
- * API này khởi tạo một Payment và Transaction ở trạng thái PENDING,
- * sau đó trả về checkoutUrl cho client để chuyển hướng người dùng.
- * @route   POST /api/payments/create-link
- * @access  Private
+ * @desc    Tạo link thanh toán PayOS... (Giữ nguyên)
+ * @route   POST /api/payments/create-link
+ * @access  Private
  */
 const createPaymentLink = async (req, res) => {
   const { description, price, courseIds } = req.body;
@@ -166,29 +161,74 @@ const createPaymentLink = async (req, res) => {
   session.startTransaction();
 
   try {
-    // BƯỚC 1: Tạo các bản ghi Enrollment
-    const enrollmentPromises = courseIds.map((courseId) => {
-      const newEnrollment = new Enrollment({
+    // BƯỚC 1: Xử lý các bản ghi Enrollment (Tìm/Cập nhật hoặc Tạo mới)
+    const enrollmentProcessingPromises = courseIds.map(async (courseId) => {
+      // Tìm enrollment hiện có
+      const existingEnrollment = await Enrollment.findOne({
         userId: userId,
         courseId: courseId,
-        status: "pending",
-      });
-      return newEnrollment.save({ session });
-    });
-    const newEnrollments = await Promise.all(enrollmentPromises);
-    const newEnrollmentIds = newEnrollments.map((e) => e._id);
+      }).session(session);
 
-    const orderCode = Date.now();
+      if (existingEnrollment) {
+        // TÌNH HUỐNG 1: Đã tồn tại & bị hủy -> Kích hoạt lại
+        if (existingEnrollment.status === "cancelled") {
+          console.log(
+            `[Payment] Kích hoạt lại enrollment 'cancelled' cho course: ${courseId}`
+          );
+          existingEnrollment.status = "pending";
+          return existingEnrollment.save({ session });
+        }
+        // TÌNH HUỐNG 2: Đã tồn tại & đang chờ -> Tái sử dụng
+        else if (existingEnrollment.status === "pending") {
+          console.log(
+            `[Payment] Tái sử dụng enrollment 'pending' cho course: ${courseId}`
+          );
+          return existingEnrollment;
+        }
+        // TÌNH HUỐNG 3: Đã sở hữu (enrolled/completed) -> BÁO LỖI
+        else {
+          console.error(
+            `[Payment] LỖI: Người dùng ${userId} đã sở hữu course ${courseId}.`
+          );
+          const error = new Error(
+            `Bạn đã sở hữu khoá học (Course ID: ${courseId}).`
+          );
+          error.statusCode = 409; // 409 Conflict
+          throw error;
+        }
+      }
+      // TÌNH HUỐNG 4: Không tồn tại -> Tạo mới
+      else {
+        console.log(
+          `[Payment] Tạo mới enrollment 'pending' cho course: ${courseId}`
+        );
+        const newEnrollment = new Enrollment({
+          userId: userId,
+          courseId: courseId,
+          status: "pending",
+        });
+        return newEnrollment.save({ session });
+      }
+    });
+
+    // Chờ tất cả các promise xử lý enrollment hoàn tất
+    const resultingEnrollments = await Promise.all(
+      enrollmentProcessingPromises
+    );
+    const newEnrollmentIds = resultingEnrollments.map((e) => e._id);
 
     // BƯỚC 2: Tạo một Payment duy nhất
+    const orderCode = parseInt(
+      Date.now().toString() + Math.floor(Math.random() * 1000)
+    );
+
     const newPayment = new Payment({
       enrollmentIds: newEnrollmentIds,
       paymentDate: new Date(),
       amount: price,
       status: "pending",
-    });
+    }); // BƯỚC 3: Tạo Transaction và liên kết với Payment
 
-    // BƯỚC 3: Tạo Transaction và liên kết với Payment
     const transaction = new Transaction({
       userId,
       amount: price,
@@ -197,23 +237,22 @@ const createPaymentLink = async (req, res) => {
       orderCode: orderCode,
       paymentId: newPayment._id,
     });
-    newPayment.transactionId = transaction._id;
 
     await newPayment.save({ session });
-    await transaction.save({ session });
+    await transaction.save({ session }); // BƯỚC 4: Tạo link PayOS
 
-    // BƯỚC 4: Tạo link PayOS
     const payosOrder = {
       amount: price,
       description: description,
       orderCode: orderCode,
       returnUrl: `${process.env.CLIENT_URL}/payment/success?orderCode=${orderCode}`,
       cancelUrl: `${process.env.CLIENT_URL}/payment/cancelled?orderCode=${orderCode}`,
-      buyerName: req.user.fullName || req.user.email,
+      buyerName: req.user.fullName,
       buyerEmail: req.user.email,
     };
 
     console.log("Dữ liệu gửi đến PayOS:", payosOrder);
+
     const paymentLinkResponse = await payOs.paymentRequests.create(payosOrder);
 
     await session.commitTransaction();
@@ -224,23 +263,12 @@ const createPaymentLink = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
+    console.error("Lỗi khi tạo link thanh toán:", error);
 
-    // ==========================================================
-    // === KHỐI LOG LỖI CHI TIẾT ĐÃ ĐƯỢC THÊM VÀO ĐÂY ===
-    // ==========================================================
-    console.error(
-      "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG KHI TẠO LINK THANH TOÁN !!!!!!!!!!!!"
-    );
-    console.error("Time:", new Date().toISOString());
-    console.error("Error Message:", error.message);
-
-    // In ra toàn bộ object lỗi để xem các thuộc tính ẩn như 'error.code' hoặc 'error.error' từ PayOS
-    // Dùng JSON.stringify để đảm bảo không có thông tin nào bị ẩn đi
-    console.error("Full Error Object:", JSON.stringify(error, null, 2));
-
-    console.error(
-      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    );
+    // Bổ sung: Gửi về lỗi 409 (Conflict) nếu người dùng đã sở hữu khóa học
+    if (error.statusCode === 409) {
+      return res.status(409).json({ message: error.message });
+    }
 
     res.status(500).json({ message: "Không thể tạo link thanh toán." });
   } finally {
@@ -249,84 +277,202 @@ const createPaymentLink = async (req, res) => {
 };
 
 /**
- * @desc    Nhận và xử lý webhook từ PayOS.
- * ...
- * @route   POST /api/payment/webhook
- * @access  Public
+ * @desc    Nhận và xử lý webhook từ PayOS.
+ * @desc    Sửa lại để so sánh đúng "success" (chữ thường).
+ * @route   POST /api/payments/webhook
+ * @access  Public
  */
 const handlePayOsWebhook = async (req, res) => {
+  console.log("=============== WEBHOOK RECEIVED ===============");
+  console.log("Timestamp:", new Date().toISOString());
+  console.log("Webhook Raw Body:", req.rawBody);
+  console.log("Webhook Parsed Body:", JSON.stringify(req.body, null, 2));
+  console.log("Webhook Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("==============================================");
+
+  if (!req.rawBody) {
+    console.log(
+      "[WEBHOOK] Nhận được request không có body (validation ping). Trả về 200 OK."
+    );
+    return res
+      .status(200)
+      .json({ message: "Webhook validation ping received." });
+  }
+
   const webhookData = req.body;
-  console.log("[WEBHOOK] Received webhook data:", webhookData);
 
   try {
-    // Bước 1: Xác thực chữ ký bằng logic đúng từ code cũ của bạn
-    const expectedSignature = createSignature(webhookData.data || {});
-    const signatureFromPayOS = webhookData.signature;
+    console.log(
+      "[WEBHOOK] Bắt đầu xác thực dữ liệu (dùng verifyPaymentWebhook)..."
+    );
+    const verifiedData = await payOs.webhooks.verify(webhookData);
+    console.log(
+      "[WEBHOOK] Dữ liệu đã được xác thực thành công.",
+      verifiedData.desc
+    ); // ***** SỬA LỖI TẠI ĐÂY: Chuyển "Success" thành "success" (chữ thường) *****
 
-    if (expectedSignature !== signatureFromPayOS) {
-      console.error("[WEBHOOK] Invalid signature.");
-      return res
-        .status(400)
-        .json({ message: "Webhook verification failed: Invalid signature." });
-    }
+    if (verifiedData.code === "00" && verifiedData.desc === "success") {
+      console.log("[WEBHOOK] Giao dịch thành công, bắt đầu xử lý.");
+      const orderCode = verifiedData.orderCode;
+      console.log(`[WEBHOOK] Tìm kiếm Transaction với orderCode: ${orderCode}`);
 
-    console.log("[WEBHOOK] Signature verified successfully.");
-
-    // Bước 2: Xử lý logic nghiệp vụ
-    const data = webhookData.data;
-
-    if (!data || !data.orderCode) {
-      console.log(
-        "[WEBHOOK] Received a test request or data is missing orderCode. Skipping."
-      );
-      return res
-        .status(200)
-        .json({ message: "Webhook acknowledged, no data to process." });
-    }
-
-    if (webhookData.code === "00") {
-      const orderCode = parseInt(data.orderCode);
       const transaction = await Transaction.findOne({ orderCode: orderCode });
 
       if (transaction && transaction.status === "pending") {
-        transaction.gatewayTransactionId = data.reference;
+        console.log(
+          `[WEBHOOK] Đã tìm thấy Transaction ID: ${transaction._id} ở trạng thái pending.`
+        ); // 1. Cập nhật Transaction
+
+        transaction.gatewayTransactionId = verifiedData.paymentId;
         transaction.status = "completed";
         await transaction.save();
+        console.log(
+          `[WEBHOOK] Đã cập nhật Transaction ID: ${transaction._id} sang 'completed'.`
+        ); // 2. Cập nhật Payment
 
         const payment = await Payment.findById(transaction.paymentId);
         if (payment) {
+          console.log(`[WEBHOOK] Đã tìm thấy Payment ID: ${payment._id}.`);
           payment.status = "completed";
           await payment.save();
+          console.log(
+            `[WEBHOOK] Đã cập nhật Payment ID: ${payment._id} sang 'completed'.`
+          ); // 3. Cập nhật Enrollments
+
+          console.log(
+            `[WEBHOOK] Bắt đầu cập nhật ${payment.enrollmentIds.length} enrollment(s).`
+          );
           await Enrollment.updateMany(
             { _id: { $in: payment.enrollmentIds } },
             { $set: { status: "enrolled" } }
           );
-          console.log(
-            `[WEBHOOK] Successfully enrolled user for ${payment.enrollmentIds.length} courses.`
+          console.log("[WEBHOOK] Đã cập nhật xong các enrollment(s).");
+
+          // 4. Lấy dữ liệu 1 LẦN DUY NHẤT để dùng cho cả (5) và (6)
+          const enrollments = await Enrollment.find({
+            _id: { $in: payment.enrollmentIds },
+          })
+            .select("courseId")
+            .populate({
+              path: "courseId",
+              select: "createdBy price", // Lấy ID giảng viên và GIÁ KHÓA HỌC
+            });
+
+          // 5. Cập nhật số tiền cho giảng viên (LOGIC ĐÃ SỬA)
+          try {
+            const earningsMap = new Map(); // Dùng Map để cộng dồn doanh thu cho mỗi giảng viên
+
+            for (const enrollment of enrollments) {
+              if (enrollment.courseId) {
+                const course = enrollment.courseId;
+                const teacherId = course.createdBy.toString();
+
+                // LỖI NGHIÊM TRỌNG ĐÃ SỬA: Tính 80% của GIÁ KHÓA HỌC, không phải tổng payment
+                const coursePrice = parseFloat(course.price.toString());
+                const revenueShare = coursePrice * 0.8;
+
+                // Cộng dồn doanh thu (nếu giảng viên có nhiều khóa học trong 1 giao dịch)
+                const currentEarnings = earningsMap.get(teacherId) || 0;
+                earningsMap.set(teacherId, currentEarnings + revenueShare);
+              }
+            }
+
+            // Tối ưu N+1 Query: Tạo mảng các promise
+            const updatePromises = [];
+            for (const [teacherId, totalRevenue] of earningsMap.entries()) {
+              console.log(
+                `[WEBHOOK] Chuẩn bị cập nhật +${totalRevenue} cho Giảng viên ID: ${teacherId}`
+              );
+              // Dùng $inc để cập nhật nguyên tử, an toàn và nhanh hơn find/save
+              updatePromises.push(
+                User.updateOne(
+                  { _id: teacherId },
+                  { $inc: { moneyLeft: totalRevenue } } // $inc sẽ tự động cộng dồn
+                )
+              );
+            }
+
+            // Chạy tất cả các lệnh cập nhật song song
+            await Promise.all(updatePromises);
+            console.log(
+              `[WEBHOOK] Đã cập nhật tiền cho ${earningsMap.size} giảng viên.`
+            );
+          } catch (moneyError) {
+            console.error(
+              "[WEBHOOK] Lỗi khi cập nhật số tiền cho giảng viên:",
+              moneyError
+            );
+          }
+
+          // 6. Xoá các khoá học đã mua khỏi giỏ hàng (Dùng lại 'enrollments')
+          try {
+            const courseIdsToRemove = enrollments.map((e) => e.courseId._id); // Lấy _id từ course đã populate
+            const userId = transaction.userId;
+
+            console.log(
+              `[WEBHOOK] Bắt đầu xóa ${courseIdsToRemove.length} khóa học khỏi giỏ hàng user: ${userId}`
+            );
+
+            const cart = await Cart.findOne({ userId: userId });
+            if (cart) {
+              const courseIdsStr = courseIdsToRemove.map((id) => id.toString());
+              cart.courseIds = cart.courseIds.filter(
+                (id) => !courseIdsStr.includes(id.toString())
+              );
+              await cart.save();
+              console.log("[WEBHOOK] Đã xóa các khóa học khỏi giỏ hàng.");
+            } else {
+              console.log(
+                `[WEBHOOK] Không tìm thấy giỏ hàng cho user: ${userId}.`
+              );
+            }
+          } catch (cartError) {
+            // Ghi lại lỗi nhưng không làm hỏng webhook
+            console.error(
+              "[WEBHOOK] Lỗi khi xóa giỏ hàng (nhưng thanh toán đã thành công):",
+              cartError
+            );
+          }
+        } else {
+          console.error(
+            `[WEBHOOK] LỖI: Không tìm thấy Payment tương ứng với Transaction ID: ${transaction._id}`
           );
         }
+      } else if (transaction) {
+        console.warn(
+          `[WEBHOOK] CẢNH BÁO: Transaction với orderCode ${orderCode} đã được xử lý trước đó (status: ${transaction.status}). Bỏ qua.`
+        );
       } else {
-        console.log(
-          `[WEBHOOK] Skipping. Order ${orderCode} not found or already processed.`
+        console.error(
+          `[WEBHOOK] LỖI: Không tìm thấy Transaction nào với orderCode: ${orderCode}`
         );
       }
+    } else {
+      console.log(
+        `[WEBHOOK] Giao dịch không thành công hoặc không cần xử lý. Code: ${verifiedData.code}, Desc: ${verifiedData.desc}`
+      );
     }
 
-    return res.status(200).json({ message: "Webhook processed." });
+    return res.status(200).json({ message: "Webhook processed successfully" });
   } catch (error) {
-    console.error("!!!!!!!!!!!! CRITICAL WEBHOOK ERROR !!!!!!!!!!!!", error);
-    return res
-      .status(500)
-      .json({ message: "An internal server error occurred." });
+    console.error(
+      "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG TRONG WEBHOOK HANDLER !!!!!!!!!!!!"
+    );
+    console.error(error.message || error);
+    console.error(
+      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    );
+    return res.status(400).json({ message: "Webhook verification failed" });
   }
 };
 
 /**
- * @desc    Kiểm tra trạng thái của một giao dịch bằng orderCode (ID của transaction)
- * @route   GET /api/payments/status/:orderCode
- * @access  Private
+ * @desc    Kiểm tra trạng thái của một giao dịch... (Giữ nguyên)
+ * @route   GET /api/payments/status/:orderCode
+ * @access  Private
  */
 const getPaymentStatus = async (req, res) => {
+  // ... (Giữ nguyên, không thay đổi)
   try {
     const transaction = await Transaction.findOne({
       orderCode: req.params.orderCode,
@@ -336,7 +482,6 @@ const getPaymentStatus = async (req, res) => {
       return res.status(404).json({ message: "Không tìm thấy giao dịch." });
     }
 
-    // Đảm bảo chỉ người tạo giao dịch mới có quyền xem
     if (transaction.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: "Không có quyền truy cập." });
     }
@@ -349,37 +494,33 @@ const getPaymentStatus = async (req, res) => {
 };
 
 /**
- * @desc    Hủy một đơn hàng đang chờ xử lý
- * @route   PUT /api/payments/cancel/:orderCode
- * @access  Private
+ * @desc    Hủy một đơn hàng đang chờ xử lý (Giữ nguyên)
+ * @route   PUT /api/payments/cancel/:orderCode
+ * @access  Private
  */
 const cancelPayment = async (req, res) => {
+  // ... (Giữ nguyên, không thay đổi)
   try {
     const { orderCode } = req.params;
 
-    // Tìm transaction dựa trên orderCode
     const transaction = await Transaction.findOne({ orderCode });
 
     if (!transaction) {
       return res.status(404).json({ message: "Không tìm thấy giao dịch." });
     }
 
-    // Chỉ cho phép hủy các giao dịch đang chờ
     if (transaction.status !== "pending") {
       return res.status(400).json({ message: "Giao dịch không thể hủy." });
     }
 
-    // Cập nhật trạng thái của transaction
     transaction.status = "cancelled";
     await transaction.save();
 
-    // Tìm và cập nhật payment liên quan
     const payment = await Payment.findById(transaction.paymentId);
     if (payment) {
       payment.status = "cancelled";
       await payment.save();
 
-      // Tìm và cập nhật tất cả enrollment liên quan
       await Enrollment.updateMany(
         { _id: { $in: payment.enrollmentIds } },
         { $set: { status: "cancelled" } }

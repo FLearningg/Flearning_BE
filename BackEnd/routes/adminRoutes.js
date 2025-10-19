@@ -6,7 +6,6 @@ const {
   getUserById,
   updateUserStatus,
   getAllCourses,
-  createCourse,
   getCourseById,
   updateCourse,
   deleteCourse,
@@ -20,6 +19,17 @@ const {
   getLesson,
   moveLessonVideo,
   getAllCategories,
+  deleteLessonFile,
+  updateLessonFile,
+  getInstructorRequests,
+  approveInstructorRequest,
+  denyInstructorRequest,
+  getPendingCourses,
+  approveCourse,
+  rejectCourse,
+  getCourseApprovalStats,
+  deactivateCourse,
+  reactivateCourse,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -45,12 +55,17 @@ router.get("/users/stats", getUserStats);
 router.get("/users/:id", getUserById);
 router.put("/users/:id/status", updateUserStatus);
 
-// Course management routes
+// Course management routes (Admin can view, update, delete, and approve/reject only)
 router.get("/courses", getAllCourses);
-router.post("/courses", createCourse);
+router.get("/courses/pending", getPendingCourses);
+router.get("/courses/approval-stats", getCourseApprovalStats);
 router.get("/courses/:courseId", getCourseById);
 router.put("/courses/:courseId", updateCourse);
 router.delete("/courses/:courseId", deleteCourse);
+router.post("/courses/:courseId/approve", approveCourse);
+router.post("/courses/:courseId/reject", rejectCourse);
+router.post("/courses/:courseId/deactivate", deactivateCourse);
+router.post("/courses/:courseId/reactivate", reactivateCourse);
 
 // Section management routes
 router.post("/courses/:courseId/sections", createSection);
@@ -64,8 +79,10 @@ router.put("/courses/:courseId/lessons/:lessonId", updateLesson);
 router.delete("/courses/:courseId/lessons/:lessonId", deleteLesson);
 router.get("/courses/:courseId/lessons/:lessonId", getLesson);
 
-// Lesson video management route
+// Lesson file management routes
 router.post("/courses/:courseId/lessons/:lessonId/move-video", moveLessonVideo);
+router.delete("/lessons/:lessonId/file", deleteLessonFile);
+router.put("/lessons/:lessonId/file", updateLessonFile);
 
 // File management routes
 router.post("/upload", upload.single("file"), uploadToFirebase);
@@ -85,5 +102,10 @@ router.post("/fix-cors-url", fixCorsUrl);
 router.get("/stats", authorize("admin"), getDashboardStats);
 
 router.get("/categories", getAllCategories);
+
+// Instructor requests route
+router.get("/instructor-requests", getInstructorRequests);
+router.post("/instructors/approve", approveInstructorRequest);
+router.post("/instructors/deny", denyInstructorRequest);
 
 module.exports = router;
