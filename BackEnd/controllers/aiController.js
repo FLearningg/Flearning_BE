@@ -54,8 +54,6 @@ exports.explainQuiz = async (req, res) => {
       });
     }
 
-    console.log(`Generating explanations for quiz ${quizId} by user ${userId}`);
-
     // Extract question details from quizData.questions or quizResult
     const questionDetails =
       quizData?.questions ||
@@ -64,8 +62,16 @@ exports.explainQuiz = async (req, res) => {
       [];
 
     if (!Array.isArray(questionDetails) || questionDetails.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No question details found in quiz result",
+      });
+    }
 
-    // Call Gemini API with streaming capability
+    // Build prompt for AI
+    const prompt = buildExplanationPrompt(questionDetails);
+
+    // Call Gemini API
     const explanations = await generateExplanationsFromAI(
       prompt,
       questionDetails
@@ -194,10 +200,15 @@ Is Correct: ${isCorrect}`;
 
   return `${questionPrompts}
 
-For each question above, generate a clear and educational explanation (2-3 sentences) about:
-1. Why the answer is correct or incorrect
-2. Key concepts to understand
-3. Tips for similar questions
+IMPORTANT INSTRUCTIONS:
+For each question above, provide a detailed and educational explanation (3-5 sentences) that:
+1. ALWAYS explain why the correct answer is correct - what concept or principle makes it the right choice
+2. If the user answer is WRONG - explain why their answer is incorrect and what misconception they might have
+3. Provide key concepts or principles related to the question
+4. Give practical examples or tips to remember this concept
+5. Suggest how to approach similar questions in the future
+
+Be encouraging and supportive. Use simple, clear language that a student can understand.
 
 Return ONLY a valid JSON array with this exact structure for each question:
 [
@@ -207,11 +218,11 @@ Return ONLY a valid JSON array with this exact structure for each question:
     "isCorrect": true/false,
     "userAnswerText": "User's answer",
     "correctAnswerText": "Correct answer",
-    "explanation": "Your educational explanation here"
+    "explanation": "Your detailed educational explanation here"
   }
 ]
 
-Important: Return ONLY valid JSON, no markdown or extra text.`;
+Important: Return ONLY valid JSON, no markdown, no code blocks, no extra text outside the JSON array.`;
 }
 
 /**
@@ -223,14 +234,31 @@ async function generateExplanationsFromAI(prompt, questionDetails) {
       systemInstruction: {
         parts: [
           {
-            text: `You are an expert educational AI assistant. Your role is to provide clear, positive, and educational explanations for quiz questions.
-For each question, explain:
-1. Why the selected answer was correct or incorrect
-2. The key concept being tested
-3. Helpful tips for understanding similar questions
+            text: `You are an expert educational tutor. Your role is to provide thorough, encouraging, and understandable explanations for quiz questions to help students learn.
 
-Always be encouraging and constructive in your explanations. Keep responses concise (2-3 sentences max).
-IMPORTANT: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No extra text.`,
+For each question:
+1. If the student's answer is CORRECT:
+   - Congratulate them
+   - Explain WHY this answer is correct
+   - Reinforce the key concept or principle
+   - Give a real-world example or analogy
+   - Provide a tip to remember this concept
+
+2. If the student's answer is WRONG:
+   - Be supportive and encouraging
+   - Clearly explain why their answer is incorrect
+   - Identify the misconception they might have
+   - Explain WHY the correct answer is correct
+   - Give context and examples
+   - Provide a memory aid or technique to avoid this mistake
+
+3. Always:
+   - Use simple, clear language that a student can understand
+   - Focus on building understanding, not just giving answers
+   - Make explanations engaging and relatable
+   - Be positive and constructive
+
+CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array.`,
           },
         ],
       },
@@ -269,8 +297,6 @@ IMPORTANT: You MUST return ONLY a valid JSON array. No markdown formatting. No c
 
     const result = await response.json();
 
-    console.log("Gemini API response received");
-
     // Extract and parse the AI response
     const explanations = parseAIResponse(result, questionDetails);
 
@@ -296,7 +322,6 @@ function parseAIResponse(response, questionDetails) {
     }
 
     const responseText = response.candidates[0].content.parts[0].text;
-    console.log("AI Response text:", responseText);
 
     // Parse JSON response
     let parsedResponse;
