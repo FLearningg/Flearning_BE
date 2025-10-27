@@ -32,6 +32,7 @@ const progressRoutes = require("./routes/progressRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const watchCourseRoute = require("./routes/WatchCourseRoute");
 const quizRoutes = require("./routes/quizRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 
 const app = express();
 
@@ -116,7 +117,7 @@ app.use(
 );
 app.use(
   express.json({
-    limit: '50mb', // Increase payload limit for large quiz data
+    limit: "50mb", // Increase payload limit for large quiz data
     // Chúng ta cần giữ lại raw body để xác thực webhook
     verify: (req, res, buf) => {
       // Chỉ lưu lại rawBody cho các request đến webhook của PayOS
@@ -126,7 +127,7 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 
 console.log("✅ [SERVER] Middleware configured");
@@ -200,6 +201,7 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/watch-course", watchCourseRoute);
 // Quiz routes
 app.use("/api/quiz", quizRoutes);
+app.use("/api/ai", aiRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 
