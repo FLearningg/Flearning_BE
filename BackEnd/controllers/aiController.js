@@ -1,6 +1,7 @@
 require("dotenv").config(); // Load environment variables
 
 const mongoose = require("mongoose");
+const { generateQuizQuestions } = require("../services/openRouterService");
 
 const MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -503,3 +504,110 @@ function createFallbackExplanations(questionDetails) {
     };
   });
 }
+
+/**
+ * POST /api/ai/generate-quiz
+ * Generate quiz questions using AI based on topic and parameters
+ */
+exports.generateQuiz = async (req, res) => {
+  try {
+    const {
+      topic,
+      lessonContent,
+      numberOfQuestions = 5,
+      difficulty = 'medium',
+      questionType = 'multiple-choice',
+      courseId,
+      lessonId,
+      title,
+      description
+    } = req.body;
+
+    const authenticatedUserId = req.user.id;
+
+    // Validation
+    if (!topic || topic.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Topic is required for quiz generation"
+      });
+    }
+
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid courseId is required"
+      });
+    }
+
+    if (numberOfQuestions < 1 || numberOfQuestions > 50) {
+      return res.status(400).json({
+        success: false,
+        message: "Number of questions must be between 1 and 50"
+      });
+    }
+
+    const validDifficulties = ['easy', 'medium', 'hard'];
+    if (!validDifficulties.includes(difficulty)) {
+      return res.status(400).json({
+        success: false,
+        message: "Difficulty must be one of: easy, medium, hard"
+      });
+    }
+
+    console.log("🤖 Generating quiz with AI...");
+    console.log("📝 Parameters:", { topic, numberOfQuestions, difficulty, questionType });
+
+    // Generate questions using OpenRouter AI
+    const questions = await generateQuizQuestions({
+      topic,
+      lessonContent,
+      numberOfQuestions,
+      difficulty,
+      questionType
+    });
+
+    console.log(`✅ Generated ${questions.length} questions`);
+
+    // Create quiz object (but don't save to database yet - let instructor review first)
+    const quizData = {
+      courseId,
+      lessonId: lessonId || null,
+      userId: authenticatedUserId,
+      title: title || `Quiz: ${topic}`,
+      description: description || `AI-generated quiz about ${topic}`,
+      questions: questions,
+      questionPoolSize: questions.length, // Show all questions by default
+      roleCreated: 'instructor'
+    };
+
+    // Return the generated quiz for instructor to review and edit
+    res.status(200).json({
+      success: true,
+      message: "Quiz generated successfully. Please review and edit before saving.",
+      data: {
+        quiz: quizData,
+        meta: {
+          generatedAt: new Date().toISOString(),
+          questionsCount: questions.length,
+          difficulty,
+          topic
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("🚨 AI generateQuiz error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate quiz with AI",
+      error: error.message
+    });
+  }
+};
