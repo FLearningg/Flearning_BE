@@ -27,6 +27,26 @@ const QuizSchema = new Schema(
     title: { type: String, required: true },
     description: { type: String },
     questions: [QuizQuestionSchema],
+    questionPoolSize: { 
+      type: Number, 
+      default: null,
+      validate: {
+        validator: function(value) {
+          // Nếu có giá trị, phải > 0
+          if (value !== null && value !== undefined) {
+            if (value <= 0) return false;
+            // Chỉ validate với questions nếu questions tồn tại và có length
+            if (this.questions && Array.isArray(this.questions) && this.questions.length > 0) {
+              return value <= this.questions.length;
+            }
+            // Nếu chưa có questions, cho phép set questionPoolSize (sẽ validate sau)
+            return true;
+          }
+          return true;
+        },
+        message: 'questionPoolSize must be greater than 0 and not exceed total questions'
+      }
+    },
     roleCreated: {
       type: String,
       enum: ["student", "instructor"],

@@ -8,6 +8,52 @@ const mammoth = require("mammoth");
 const multer = require("multer");
 const { uploadToFirebase: uploadToFirebaseStorage } = require("../utils/firebaseStorage");
 
+// Helper function to apply randomization to quiz data
+function applyQuizRandomization(quiz, logPrefix = '') {
+  let quizData = quiz.toObject();
+  
+  // Check if we need to randomize
+  const shouldRandomize = quiz.questionPoolSize && 
+                         typeof quiz.questionPoolSize === 'number' && 
+                         quiz.questionPoolSize > 0 && 
+                         quiz.questionPoolSize < quiz.questions.length;
+  
+  
+  if (shouldRandomize) {
+    
+    // Create array with original indices for mapping
+    const questionsWithIndex = quiz.questions.map((question, index) => ({
+      ...question.toObject(),
+      originalIndex: index // Store original position for backend mapping
+    }));
+    
+    // Shuffle using Fisher-Yates algorithm
+    for (let i = questionsWithIndex.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [questionsWithIndex[i], questionsWithIndex[j]] = [questionsWithIndex[j], questionsWithIndex[i]];
+    }
+    
+    // Select the specified number of questions (answers remain intact)
+    quizData.questions = questionsWithIndex.slice(0, quiz.questionPoolSize);
+    
+    // Add metadata about randomization
+    quizData.isRandomized = true;
+    quizData.totalQuestionsInPool = quiz.questions.length;
+    quizData.selectedQuestionsCount = quiz.questionPoolSize;
+  } else {
+    // Still add originalIndex for consistency
+    quizData.questions = quiz.questions.map((question, index) => ({
+      ...question.toObject(),
+      originalIndex: index
+    }));
+    quizData.isRandomized = false;
+    quizData.totalQuestionsInPool = quiz.questions.length;
+    quizData.selectedQuestionsCount = quiz.questions.length;
+  }
+  
+  return quizData;
+}
+
 // In-memory cache for request deduplication (simple protection against rapid duplicates)
 const requestCache = new Map();
 
@@ -39,14 +85,11 @@ function startCleanupInterval() {
     
     // Log cleanup if items were removed
     if (cleanedCount > 0) {
-      console.log(`🧹 Cache cleanup: removed ${cleanedCount} expired entries. Current cache size: ${requestCache.size}, processing: ${processingQuizzes.size}`);
     }
     
     // Emergency cleanup if cache gets too large
     if (requestCache.size > 1000) {
-      console.log(`⚠️ Cache size exceeded 1000 entries (${requestCache.size}). Performing emergency cleanup...`);
       requestCache.clear();
-      console.log(`🧹 Emergency cleanup completed. Cache cleared.`);
     }
   }, 5000);
 }
@@ -56,7 +99,6 @@ function stopCleanupInterval() {
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
     cleanupInterval = null;
-    console.log('🛑 Quiz cache cleanup interval stopped');
   }
 }
 
@@ -180,7 +222,6 @@ async function parseWordQuiz(buffer) {
     
     return questions;
   } catch (error) {
-    console.error("❌ Error in parseWordQuiz:", error);
     throw new Error(`Failed to parse Word document: ${error.message}`);
   }
 }
@@ -197,30 +238,10 @@ exports.uploadWordQuiz = [
     
     try {
       // Extract file info and request body
-      console.log("📁 File info:", req.file ? {
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        path: req.file.path
-      } : "No file");
-      console.log("� Request body:", {
-        courseId: req.body.courseId,
-        title: req.body.title,
-        hasDescription: !!req.body.description,
-        sectionId: req.body.sectionId,
-        lessonTitle: req.body.lessonTitle,
-        autoCreateLesson: req.body.autoCreateLesson
-      });
       
       const { courseId, title, description, sectionId, lessonTitle, autoCreateLesson } = req.body;
       
       if (!req.file) {
-        console.log("❌ No Word file uploaded - request body:", {
-          hasQuizData: !!req.body.quizData,
-          hasTitle: !!req.body.title,
-          hasQuestions: !!req.body.questions,
-          bodyKeys: Object.keys(req.body)
-        });
         
         // Check if this is actually a quiz data request misrouted
         if (req.body.quizData || (req.body.title && req.body.questions)) {
@@ -288,7 +309,6 @@ exports.uploadWordQuiz = [
         const question = questions[i];
         const hasCorrectAnswer = question.answers.some(answer => answer.isCorrect);
         if (!hasCorrectAnswer) {
-          console.log(`❌ Question ${i + 1} has no correct answer`);
           return res.status(400).json({
             success: false,
             message: `Question ${i + 1} has no correct answer marked with *`
@@ -361,7 +381,6 @@ exports.uploadWordQuiz = [
           "quiz"
         );
       } catch (firebaseError) {
-        console.error("Firebase upload error:", firebaseError);
         // Continue even if firebase upload fails
       }
       
@@ -376,18 +395,6 @@ exports.uploadWordQuiz = [
         courseId: validCourseId || null
       };
       
-      console.log(`📦 Quiz data prepared:`, {
-        title: quizData.title,
-        questionsCount: quizData.questions.length,
-        hasQuestions: quizData.questions.length > 0,
-        firstQuestionPreview: quizData.questions[0]?.content?.substring(0, 50) + "...",
-        questionsAreArray: Array.isArray(quizData.questions),
-        sampleQuestion: quizData.questions[0] ? {
-          content: quizData.questions[0].content,
-          answersCount: quizData.questions[0].answers?.length || 0,
-          hasAnswers: Array.isArray(quizData.questions[0].answers)
-        } : null
-      });
       
       res.status(200).json({
         success: true,
@@ -403,7 +410,6 @@ exports.uploadWordQuiz = [
       });
       
     } catch (error) {
-      console.error("Error in uploadWordQuiz:", error);
       
       if (error.message.includes('Failed to parse Word document')) {
         return res.status(400).json({
@@ -423,7 +429,6 @@ exports.uploadWordQuiz = [
         try {
           require('fs').unlinkSync(tempFilePath);
         } catch (cleanupError) {
-          console.error("Error cleaning up temp file:", cleanupError);
         }
       }
     }
@@ -466,6 +471,7 @@ async function createQuizFromWordData(quizData, courseId, userId = null) {
       title: title.trim(),
       description: description || "",
       questions: questions,
+      questionPoolSize: null, // Word upload doesn't support questionPoolSize initially
       roleCreated: "instructor",
       userId: userId
     });
@@ -498,13 +504,15 @@ exports.getQuizById = async (req, res) => {
       });
     }
     
+    // Apply randomization using helper function
+    const quizData = applyQuizRandomization(quiz, '[getQuizById]');
+    
     res.status(200).json({
       success: true,
-      data: quiz
+      data: quizData
     });
     
   } catch (error) {
-    console.error("Error in getQuizById:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -608,11 +616,14 @@ exports.getQuizByLesson = async (req, res) => {
       });
     }
 
+    // Apply randomization using helper function
+    const quizData = applyQuizRandomization(quiz, '[getQuizByLesson]');
+
     // Allow users to retake the quiz
     res.status(200).json({
       success: true,
       data: {
-        ...quiz.toObject(),
+        ...quizData,
         lessonInfo: {
           id: lesson._id,
           title: lesson.title,
@@ -625,7 +636,6 @@ exports.getQuizByLesson = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Error in getQuizByLesson:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -753,7 +763,6 @@ exports.getLessonDetail = async (req, res) => {
     res.status(200).json(baseResponse);
     
   } catch (error) {
-    console.error("❌ Error in getLessonDetail:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -775,7 +784,6 @@ exports.getQuizzesInLesson = async (req, res) => {
     // Handle frontend format with 'quiz_' prefix
     if (lessonId.startsWith('quiz_')) {
       lessonId = lessonId.replace('quiz_', '');
-      console.log(`🔄 Cleaned lessonId from quiz_${lessonId} to ${lessonId}`);
     }
     
     // Validate lessonId
@@ -833,7 +841,6 @@ exports.getQuizzesInLesson = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in getQuizzesInLesson:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -862,7 +869,6 @@ exports.getQuizzesByCourse = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in getQuizzesByCourse:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -896,7 +902,6 @@ exports.deleteQuiz = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in deleteQuiz:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -915,27 +920,15 @@ exports.updateQuiz = async (req, res) => {
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   try {
-    console.log(`🔄 [${requestId}] UPDATE QUIZ REQUEST STARTED`);
     
     const { quizId } = req.params;
-    const { title, description, questions } = req.body;
+    const { title, description, questions, questionPoolSize } = req.body;
     
-    console.log(`🔍 [${requestId}] Received Quiz ID:`, {
-      quizId: quizId,
-      quizIdType: typeof quizId,
-      quizIdLength: quizId?.length,
-      isString: typeof quizId === 'string',
-      requestUrl: req.originalUrl
-    });
+    
     
     // Validate quizId
     const mongoose = require('mongoose');
     if (!mongoose.Types.ObjectId.isValid(quizId)) {
-      console.log(`❌ [${requestId}] Invalid Quiz ID format:`, {
-        received: quizId,
-        type: typeof quizId,
-        length: quizId?.length
-      });
       return res.status(400).json({
         success: false,
         message: "Invalid Quiz ID format",
@@ -955,7 +948,6 @@ exports.updateQuiz = async (req, res) => {
       const lastRequest = requestCache.get(editCacheKey);
       const timeDiff = Date.now() - lastRequest;
       if (timeDiff < 3000) { // If same edit within 3 seconds
-        console.log(`🚨 [${requestId}] DUPLICATE EDIT BLOCKED! Last edit ${timeDiff}ms ago`);
         return res.status(429).json({
           success: false,
           message: "Duplicate edit request detected. Please wait before trying again.",
@@ -966,7 +958,6 @@ exports.updateQuiz = async (req, res) => {
     
     // Store current request in cache
     requestCache.set(editCacheKey, Date.now());
-    console.log(`💾 [${requestId}] Edit request cached`);
 
     // Check if quiz exists
     const quiz = await Quiz.findById(quizId);
@@ -981,6 +972,9 @@ exports.updateQuiz = async (req, res) => {
     const updateData = {};
     if (title !== undefined) updateData.title = title.trim();
     if (description !== undefined) updateData.description = description;
+    if (questionPoolSize !== undefined) {
+      updateData.questionPoolSize = questionPoolSize;
+    }
     if (questions !== undefined) {
       // Validate questions if provided
       if (Array.isArray(questions)) {
@@ -1020,7 +1014,6 @@ exports.updateQuiz = async (req, res) => {
       });
     }
     
-    console.log(`✅ [${requestId}] Quiz updated successfully: ${updatedQuiz._id}`);
 
     res.status(200).json({
       success: true,
@@ -1029,7 +1022,6 @@ exports.updateQuiz = async (req, res) => {
     });
     
   } catch (error) {
-    console.error(`❌ [${requestId}] Error in updateQuiz:`, error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1097,7 +1089,6 @@ exports.linkQuizToCourse = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in linkQuizToCourse:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1177,7 +1168,6 @@ exports.linkQuizToLesson = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in linkQuizToLesson:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1278,7 +1268,6 @@ exports.createQuizLesson = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in createQuizLesson:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1323,7 +1312,6 @@ exports.createMissingQuizLessons = async (req, res) => {
         }).populate('lessons');
 
         if (!firstSection) {
-          console.log(`❌ No section found for course ${quiz.courseId.title}`);
           errorCount++;
           results.push({
             quizId: quiz._id,
@@ -1370,10 +1358,8 @@ exports.createMissingQuizLessons = async (req, res) => {
           success: true
         });
 
-        console.log(`✅ Created lesson for quiz: ${quiz.title}`);
 
       } catch (error) {
-        console.error(`❌ Error creating lesson for quiz ${quiz.title}:`, error);
         errorCount++;
         results.push({
           quizId: quiz._id,
@@ -1395,7 +1381,6 @@ exports.createMissingQuizLessons = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in createMissingQuizLessons:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1417,16 +1402,15 @@ async function createQuizFromData(quizData, courseId) {
       title: quizData.title,
       description: quizData.description || "",
       questions: quizData.questions || [],
+      questionPoolSize: quizData.questionPoolSize || null, // Add questionPoolSize support
       roleCreated: quizData.roleCreated || "instructor",
       userId: quizData.userId || null
     });
     
     const savedQuiz = await newQuiz.save();
-    console.log("✅ Quiz created from data:", savedQuiz._id, savedQuiz.title);
     return savedQuiz;
     
   } catch (error) {
-    console.error("❌ Error creating quiz from data:", error);
     throw error;
   }
 }
@@ -1445,6 +1429,7 @@ exports.createQuizFromFrontendData = async (req, res) => {
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   try {
+    
     const { 
       quizData, 
       courseId, 
@@ -1462,14 +1447,15 @@ exports.createQuizFromFrontendData = async (req, res) => {
         title: req.body.title,
         description: req.body.description,
         questions: req.body.questions,
+        questionPoolSize: req.body.questionPoolSize || null, // Add questionPoolSize support
         roleCreated: req.body.roleCreated || "instructor",
         userId: req.body.userId
       };
     }
+    
 
     // Validate required fields first before any caching
     if (!actualQuizData || typeof actualQuizData !== 'object') {
-      console.log(`❌ [${requestId}] VALIDATION FAILED: Quiz data is required`);
       return res.status(400).json({
         success: false,
         message: "Quiz data is required"
@@ -1505,7 +1491,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
     );
     
     if (existingProcessing) {
-      console.log(`🔒 [${requestId}] Quiz is currently being processed: ${existingProcessing}`);
       return res.status(429).json({
         success: false,
         message: "This quiz is currently being processed. Please wait a moment and try again.",
@@ -1534,8 +1519,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
       const lastRequest = requestCache.get(cacheKey);
       const timeDiff = Date.now() - lastRequest;
       if (timeDiff < 10000) { // Increased to 10 seconds for better protection
-        console.log(`🚨 [${requestId}] DUPLICATE REQUEST BLOCKED! Last request ${timeDiff}ms ago`);
-        console.log(`🔍 [${requestId}] Cache key: ${cacheKey}`);
         
         // Try to find the quiz that was created by the previous request
         const recentQuiz = await Quiz.findOne({
@@ -1545,7 +1528,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
         }).sort({ createdAt: -1 });
         
         if (recentQuiz) {
-          console.log(`📋 [${requestId}] Found recent quiz from cache: ${recentQuiz._id}`);
           processingQuizzes.delete(processingKey); // Clean up before return
           return res.status(200).json({
             success: true,
@@ -1581,6 +1563,7 @@ exports.createQuizFromFrontendData = async (req, res) => {
         title: req.body.title,
         description: req.body.description,
         questions: req.body.questions,
+        questionPoolSize: req.body.questionPoolSize || null, // Add questionPoolSize support
         roleCreated: req.body.roleCreated || "instructor",
         userId: req.body.userId
       };
@@ -1588,7 +1571,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
 
     // Validate required fields
     if (!actualQuizData || typeof actualQuizData !== 'object') {
-      console.log(`❌ [${requestId}] VALIDATION FAILED: Quiz data is required`);
       return res.status(400).json({
         success: false,
         message: "Quiz data is required"
@@ -1596,7 +1578,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
     }
 
     if (!actualQuizData.title || actualQuizData.title.trim() === "") {
-      console.log(`❌ [${requestId}] VALIDATION FAILED: Quiz title is required`);
       return res.status(400).json({
         success: false,
         message: "Quiz title is required"
@@ -1604,7 +1585,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
     }
 
     if (!Array.isArray(actualQuizData.questions) || actualQuizData.questions.length === 0) {
-      console.log(`❌ [${requestId}] VALIDATION FAILED: Quiz must have at least one question`);
       return res.status(400).json({
         success: false,
         message: "Quiz must have at least one question"
@@ -1648,6 +1628,7 @@ exports.createQuizFromFrontendData = async (req, res) => {
           title: actualQuizData.title.trim(),
           description: actualQuizData.description || "",
           questions: actualQuizData.questions, // Ensure questions are saved
+          questionPoolSize: actualQuizData.questionPoolSize || null, // Add questionPoolSize support
           roleCreated: actualQuizData.roleCreated || "instructor",
           userId: req.user?.id || actualQuizData.userId || null
         });
@@ -1729,7 +1710,6 @@ exports.createQuizFromFrontendData = async (req, res) => {
     // Clean up processing key on error
     if (typeof processingKey !== 'undefined') {
       processingQuizzes.delete(processingKey);
-      console.log(`🔓 [${requestId}] Cleaned up processing key on error: ${processingKey}`);
     }
     
     res.status(500).json({
@@ -1792,26 +1772,33 @@ exports.submitQuiz = async (req, res) => {
       quizId: quizId
     });
 
-    let totalQuestions = quiz.questions.length;
+    // Determine the actual number of questions the student is answering
+    // This should be based on the answers submitted, not the total questions in the quiz
+    let totalQuestions = answers.length;
     let correctAnswers = 0;
     let questionResults = [];
 
     for (let i = 0; i < answers.length; i++) {
       const userAnswer = answers[i];
-      const questionIndex = userAnswer.questionIndex;
+      const questionIndex = userAnswer.questionIndex; // Index in randomized array (0-19)
+      const originalIndex = userAnswer.originalIndex; // Index in original pool (0-59) - from frontend
       const selectedAnswers = userAnswer.selectedAnswers || [];
 
-      // Validate question index
-      if (questionIndex < 0 || questionIndex >= totalQuestions) {
+      
+      // Validate originalIndex against the full quiz
+      if (originalIndex === undefined || originalIndex < 0 || originalIndex >= quiz.questions.length) {
         continue;
       }
-
-      const question = quiz.questions[questionIndex];
+      
+      // Get the original question from the full quiz using originalIndex from frontend
+      const question = quiz.questions[originalIndex];
+      
 
       // Check if question has answers array
       if (!question.answers || !Array.isArray(question.answers)) {
         questionResults.push({
-          questionIndex: questionIndex,
+          questionIndex: questionIndex, // Index in randomized array
+          originalIndex: originalIndex, // Index in original full quiz
           questionContent: question.content || "No content",
           userAnswers: selectedAnswers.map(index => ({ index, content: "Invalid answer structure" })),
           correctAnswers: [],
@@ -1834,7 +1821,8 @@ exports.submitQuiz = async (req, res) => {
       if (isCorrect) correctAnswers++;
 
       questionResults.push({
-        questionIndex: questionIndex,
+        questionIndex: questionIndex, // Index in randomized array (for frontend reference)
+        originalIndex: originalIndex, // Index in original full quiz (for backend reference)
         questionContent: question.content || "No content",
         userAnswers: selectedAnswers.map(index => ({
           index: index,
@@ -1861,7 +1849,11 @@ exports.submitQuiz = async (req, res) => {
         correctAnswers: correctAnswers,
         scorePercentage: scorePercentage,
         passed: passed,
-        questionResults: questionResults
+        questionResults: questionResults,
+        // Add randomization info
+        isRandomized: quiz.questionPoolSize && quiz.questionPoolSize < quiz.questions.length,
+        totalQuestionsInPool: quiz.questions.length,
+        selectedQuestionsCount: totalQuestions
       };
 
       await existingResult.save();
@@ -1893,7 +1885,11 @@ exports.submitQuiz = async (req, res) => {
           correctAnswers: correctAnswers,
           scorePercentage: scorePercentage,
           passed: passed,
-          questionResults: questionResults
+          questionResults: questionResults,
+          // Add randomization info
+          isRandomized: quiz.questionPoolSize && quiz.questionPoolSize < quiz.questions.length,
+          totalQuestionsInPool: quiz.questions.length,
+          selectedQuestionsCount: totalQuestions
         }
       });
 
@@ -1971,7 +1967,6 @@ exports.getQuizResult = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in getQuizResult:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -2054,7 +2049,6 @@ exports.getMyQuizHistory = async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Error in getMyQuizHistory:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
