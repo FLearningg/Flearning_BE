@@ -54,12 +54,13 @@ exports.explainQuiz = async (req, res) => {
       });
     }
 
-    // Extract question details from quizData.questions or quizResult
+    // Extract question details - prioritize quizData.questions (complete frontend data)
     const questionDetails =
-      quizData?.questions ||
-      quizResult.details?.questionResults ||
-      quizResult.questionResults ||
+      quizData?.questions ||                    // 1. Complete data from frontend (preferred)
+      quizResult.details?.questionResults ||    // 2. Fallback: from database details
+      quizResult.questionResults ||             // 3. Fallback: from database root
       [];
+      
 
     if (!Array.isArray(questionDetails) || questionDetails.length === 0) {
       return res.status(400).json({
@@ -70,8 +71,18 @@ exports.explainQuiz = async (req, res) => {
 
     // Build prompt for AI
     const prompt = buildExplanationPrompt(questionDetails);
+    console.log("🔍 AI prompt preview:", prompt.substring(0, 500) + "...");
+    console.log("🔍 Question details count:", questionDetails.length);
+    console.log("🔍 First question sample:", questionDetails[0] ? {
+      questionText: questionDetails[0].questionText || questionDetails[0].questionContent,
+      userAnswerText: questionDetails[0].userAnswerText,
+      correctAnswerText: questionDetails[0].correctAnswerText,
+      isCorrect: questionDetails[0].isCorrect
+    } : "No questions");
 
     // Call Gemini API
+    console.log("🔍 Gemini API Key exists:", !!process.env.GEMINI_API_KEY);
+    console.log("🔍 Gemini API URL:", GEMINI_API_URL.replace(process.env.GEMINI_API_KEY || '', '[HIDDEN]'));
     const explanations = await generateExplanationsFromAI(
       prompt,
       questionDetails
@@ -92,7 +103,12 @@ exports.explainQuiz = async (req, res) => {
       data: responseData,
     });
   } catch (error) {
-    console.error("Error in explainQuiz:", error);
+    console.error("🚨 AI explainQuiz error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     res.status(500).json({
       success: false,
       message: "Failed to generate AI explanations",
@@ -163,45 +179,44 @@ function validateExplainQuizRequest({
 function buildExplanationPrompt(questionDetails) {
   const questionPrompts = questionDetails
     .map((q, index) => {
-      // Handle both structures: quizData.questions and quizResult.questionResults
-      const questionText = q.questionText || `Question ${index + 1}`;
+      // Handle both formats: frontend questionsForAI and database questionResults
+      let questionText, userAnswer, correctAnswer, isCorrect;
 
-      // Get user answer - handle both structures
-      let userAnswer = "Not answered";
-      if (q.userAnswer !== undefined) {
-        // From quizData.questions: userAnswer is the index
-        userAnswer =
-          q.options?.[q.userAnswer]?.content || `Option ${q.userAnswer}`;
-      } else if (q.userAnswers?.[0]?.content) {
-        // From quizResult.questionResults
-        userAnswer = q.userAnswers[0].content;
+      if (q.questionText) {
+        // Frontend questionsForAI format
+        questionText = q.questionText;
+        userAnswer = q.userAnswerText || "Not answered";
+        correctAnswer = q.correctAnswerText || "N/A";
+        isCorrect = q.isCorrect || false;
+      } else {
+        // Database questionResults format (fallback)
+        questionText = q.questionContent || `Question ${index + 1}`;
+        
+        userAnswer = "Not answered";
+        if (q.userAnswers && q.userAnswers.length > 0 && q.userAnswers[0].content) {
+          userAnswer = q.userAnswers[0].content;
+        }
+
+        correctAnswer = "N/A";
+        if (q.correctAnswers && q.correctAnswers.length > 0 && q.correctAnswers[0].content) {
+          correctAnswer = q.correctAnswers[0].content;
+        }
+
+        isCorrect = q.isCorrect || false;
       }
 
-      // Get correct answer - handle both structures
-      let correctAnswer = "N/A";
-      if (q.correctAnswer !== undefined) {
-        // From quizData.questions: correctAnswer is the index
-        correctAnswer =
-          q.options?.[q.correctAnswer]?.content || `Option ${q.correctAnswer}`;
-      } else if (q.correctAnswers?.[0]?.content) {
-        // From quizResult.questionResults
-        correctAnswer = q.correctAnswers[0].content;
-      }
 
-      // Determine if correct
-      const isCorrect = q.userAnswer === q.correctAnswer || q.isCorrect;
-
-      return `${questionText}
-User's Answer: ${userAnswer}
-Correct Answer: ${correctAnswer}
-Is Correct: ${isCorrect}`;
+      return `Q${index + 1}: ${questionText}
+User: ${userAnswer}
+Correct: ${correctAnswer}
+Result: ${isCorrect ? 'Correct' : 'Wrong'}`;
     })
     .join("\n\n");
 
   return `${questionPrompts}
 
 IMPORTANT INSTRUCTIONS:
-For each question above, provide a detailed and educational explanation (3-5 sentences) that:
+For each question above, provide a brief and clear explanation (1-2 sentences) that:
 1. ALWAYS explain why the correct answer is correct - what concept or principle makes it the right choice
 2. If the user answer is WRONG - explain why their answer is incorrect and what misconception they might have
 3. Provide key concepts or principles related to the question
@@ -258,7 +273,7 @@ For each question:
    - Make explanations engaging and relatable
    - Be positive and constructive
 
-CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array.`,
+CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array. Keep explanations short (max 50 words each).`,
           },
         ],
       },
@@ -275,12 +290,11 @@ CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No co
       generationConfig: {
         temperature: 0.3,
         topP: 0.8,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 16384, // Increased for longer responses
         responseMimeType: "application/json",
       },
     };
 
-    console.log("Calling Gemini API...");
 
     const response = await fetch(GEMINI_API_URL, {
       method: "POST",
@@ -302,7 +316,12 @@ CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No co
 
     return explanations;
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
+    console.error("🚨 generateExplanationsFromAI error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     throw error;
   }
 }
@@ -317,7 +336,7 @@ function parseAIResponse(response, questionDetails) {
       !response.candidates ||
       !response.candidates[0]?.content?.parts[0]?.text
     ) {
-      console.error("Invalid Gemini response structure:", response);
+      console.error("🚨 Invalid Gemini response structure:", JSON.stringify(response, null, 2));
       return createFallbackExplanations(questionDetails);
     }
 
@@ -328,13 +347,56 @@ function parseAIResponse(response, questionDetails) {
     try {
       parsedResponse = JSON.parse(responseText);
     } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", parseError);
-      // Try to extract JSON from the response
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        parsedResponse = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("Could not extract valid JSON from AI response");
+      console.error("🚨 Failed to parse AI response as JSON:", parseError);
+      console.error("🚨 Raw response text length:", responseText.length);
+      
+      // Try to fix truncated JSON
+      let fixedJson = responseText;
+      
+      // If JSON is truncated, try to close it properly
+      if (parseError.message.includes("Unterminated string") || parseError.message.includes("Unexpected end")) {
+        console.log("🔧 Attempting to fix truncated JSON...");
+        
+        // Find the last complete object
+        const lastCompleteObjectMatch = fixedJson.match(/.*}(?=\s*,?\s*\{)/g);
+        if (lastCompleteObjectMatch) {
+          const lastCompleteIndex = fixedJson.lastIndexOf(lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1]) + lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1].length;
+          fixedJson = fixedJson.substring(0, lastCompleteIndex) + "\n]";
+          console.log("🔧 Fixed JSON by truncating to last complete object");
+        } else {
+          // Try to close the current object and array
+          fixedJson = fixedJson.replace(/,?\s*$/, '') + '"}]';
+          console.log("🔧 Fixed JSON by closing current object");
+        }
+      }
+      
+      try {
+        parsedResponse = JSON.parse(fixedJson);
+        console.log("✅ Successfully parsed fixed JSON with", parsedResponse.length, "items");
+      } catch (fixError) {
+        console.error("🚨 Failed to parse fixed JSON:", fixError);
+        // Try to extract JSON array from the response
+        const jsonMatch = responseText.match(/\[[\s\S]*?\}(?=\s*,?\s*\{|\s*\])/g);
+        if (jsonMatch && jsonMatch.length > 0) {
+          console.log("🔧 Found partial JSON, extracting valid objects...");
+          const validObjects = [];
+          for (const match of jsonMatch) {
+            try {
+              const obj = JSON.parse(match + '}');
+              validObjects.push(obj);
+            } catch (e) {
+              // Skip invalid objects
+            }
+          }
+          if (validObjects.length > 0) {
+            parsedResponse = validObjects;
+            console.log("✅ Extracted", validObjects.length, "valid objects from partial JSON");
+          } else {
+            throw new Error("Could not extract valid JSON from AI response");
+          }
+        } else {
+          throw new Error("Could not extract valid JSON from AI response");
+        }
       }
     }
 
@@ -343,44 +405,56 @@ function parseAIResponse(response, questionDetails) {
       throw new Error("AI response is not a JSON array");
     }
 
-    // Map AI response to expected format and replace questionText with actual question
+    // Map AI response to expected format - handle both frontend and database formats
     const explanations = parsedResponse.map((item, index) => {
-      // Get actual isCorrect value from questionDetails if available
-      let isCorrect = item.isCorrect ?? false;
-      if (questionDetails[index]) {
-        // From quizData.questions: compare userAnswer with correctAnswer
-        if (
-          questionDetails[index].userAnswer !== undefined &&
-          questionDetails[index].correctAnswer !== undefined
-        ) {
-          isCorrect =
-            questionDetails[index].userAnswer ===
-            questionDetails[index].correctAnswer;
+      const questionDetail = questionDetails[index];
+      
+      // Handle both formats: frontend questionsForAI and database questionResults
+      let questionText, userAnswerText, correctAnswerText, isCorrect;
+
+      if (questionDetail?.questionText) {
+        // Frontend questionsForAI format
+        questionText = questionDetail.questionText;
+        userAnswerText = questionDetail.userAnswerText || "Not answered";
+        correctAnswerText = questionDetail.correctAnswerText || "N/A";
+        isCorrect = questionDetail.isCorrect || false;
+      } else {
+        // Database questionResults format (fallback)
+        questionText = questionDetail?.questionContent || item.questionText || `Question ${index + 1}`;
+        
+        userAnswerText = item.userAnswerText ?? "Not provided";
+        if (questionDetail?.userAnswers && questionDetail.userAnswers.length > 0) {
+          userAnswerText = questionDetail.userAnswers[0].content;
         }
-        // From quizResult: use isCorrect directly
-        else if (questionDetails[index].isCorrect !== undefined) {
-          isCorrect = questionDetails[index].isCorrect;
+        
+        correctAnswerText = item.correctAnswerText ?? "Not provided";
+        if (questionDetail?.correctAnswers && questionDetail.correctAnswers.length > 0) {
+          correctAnswerText = questionDetail.correctAnswers[0].content;
         }
+
+        isCorrect = questionDetail?.isCorrect ?? item.isCorrect ?? false;
       }
 
       return {
-        questionIndex: item.questionIndex ?? index,
-        questionId: questionDetails[index]?.questionId || item.questionId,
-        questionText:
-          questionDetails[index]?.questionText ||
-          item.questionText ||
-          `Question ${index + 1}`,
+        questionIndex: questionDetail?.questionIndex ?? index,
+        originalIndex: questionDetail?.originalIndex, // Include originalIndex for reference
+        questionId: questionDetail?.questionId || item.questionId,
+        questionText: questionText,
         isCorrect: isCorrect,
-        userAnswerText: item.userAnswerText ?? "Not provided",
-        correctAnswerText: item.correctAnswerText ?? "Not provided",
-        explanation:
-          item.explanation || "No explanation available for this question.",
+        userAnswerText: userAnswerText,
+        correctAnswerText: correctAnswerText,
+        explanation: item.explanation || "No explanation available for this question.",
       };
     });
 
     return explanations;
   } catch (error) {
-    console.error("Error parsing AI response:", error);
+    console.error("🚨 parseAIResponse error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     return createFallbackExplanations(questionDetails);
   }
 }
@@ -390,33 +464,38 @@ function parseAIResponse(response, questionDetails) {
  */
 function createFallbackExplanations(questionDetails) {
   return questionDetails.map((q, index) => {
-    // Get user answer text - handle both structures
-    let userAnswerText = "Not answered";
-    if (q.userAnswer !== undefined && q.options) {
-      // From quizData.questions: userAnswer is the index
-      userAnswerText =
-        q.options[q.userAnswer]?.content || `Option ${q.userAnswer}`;
-    } else if (q.userAnswers?.[0]?.content) {
-      // From quizResult.questionResults
-      userAnswerText = q.userAnswers[0].content;
-    }
+    // Handle both formats: frontend questionsForAI and database questionResults
+    let questionText, userAnswerText, correctAnswerText, isCorrect;
 
-    // Get correct answer text - handle both structures
-    let correctAnswerText = "N/A";
-    if (q.correctAnswer !== undefined && q.options) {
-      // From quizData.questions: correctAnswer is the index
-      correctAnswerText =
-        q.options[q.correctAnswer]?.content || `Option ${q.correctAnswer}`;
-    } else if (q.correctAnswers?.[0]?.content) {
-      // From quizResult.questionResults
-      correctAnswerText = q.correctAnswers[0].content;
+    if (q.questionText) {
+      // Frontend questionsForAI format
+      questionText = q.questionText;
+      userAnswerText = q.userAnswerText || "Not answered";
+      correctAnswerText = q.correctAnswerText || "N/A";
+      isCorrect = q.isCorrect || false;
+    } else {
+      // Database questionResults format (fallback)
+      questionText = q.questionContent || `Question ${index + 1}`;
+      
+      userAnswerText = "Not answered";
+      if (q.userAnswers && q.userAnswers.length > 0 && q.userAnswers[0].content) {
+        userAnswerText = q.userAnswers[0].content;
+      }
+
+      correctAnswerText = "N/A";
+      if (q.correctAnswers && q.correctAnswers.length > 0 && q.correctAnswers[0].content) {
+        correctAnswerText = q.correctAnswers[0].content;
+      }
+
+      isCorrect = q.isCorrect || false;
     }
 
     return {
-      questionIndex: index,
+      questionIndex: q.questionIndex ?? index,
+      originalIndex: q.originalIndex, // Include originalIndex for reference
       questionId: q.questionId,
-      questionText: q.questionText || `Question ${index + 1}`,
-      isCorrect: q.userAnswer === q.correctAnswer || (q.isCorrect ?? false),
+      questionText: questionText,
+      isCorrect: isCorrect,
       userAnswerText: userAnswerText,
       correctAnswerText: correctAnswerText,
       explanation:
