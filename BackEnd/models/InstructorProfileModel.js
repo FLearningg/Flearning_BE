@@ -82,6 +82,43 @@ const instructorProfileSchema = new mongoose.Schema(
     },
     approvedAt: Date,
     rejectedAt: Date,
+
+    // AI Review Fields
+    aiReviewStatus: {
+      type: String,
+      enum: ["pending", "approved", "rejected", "manual_review"],
+    },
+    aiReviewScore: {
+      type: Number,
+      min: 0,
+      max: 100,
+    },
+    aiReviewDetails: {
+      decision: {
+        status: String,
+        reason: String,
+        confidence: Number,
+      },
+      analysis: {
+        personalInfo: {
+          score: Number,
+          found: Boolean,
+        },
+        experience: {
+          score: Number,
+          found: Boolean,
+        },
+        education: {
+          score: Number,
+          found: Boolean,
+        },
+        skills: {
+          score: Number,
+          found: Boolean,
+        },
+      },
+    },
+    aiReviewedAt: Date,
   },
   {
     timestamps: true,

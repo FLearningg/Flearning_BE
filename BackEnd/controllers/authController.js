@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const sendEmail = require("../utils/sendEmail");
 const emailTemplates = require("../utils/emailTemplates");
 const { OAuth2Client } = require("google-auth-library");
+const { reviewInstructorProfile } = require("../services/aiReviewService");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -126,6 +127,22 @@ exports.verifyEmail = async (req, res) => {
       instructorProfile.applicationStatus = "pending";
       await instructorProfile.save();
       console.log("Updated instructor profile status to pending for user:", user.email);
+      
+      // Kích hoạt AI review sau khi email được xác minh
+      console.log("🤖 Triggering AI review for instructor profile:", instructorProfile._id);
+      try {
+        // Chạy AI review bất đồng bộ để không block response
+        setTimeout(async () => {
+          try {
+            const aiReviewResult = await reviewInstructorProfile(instructorProfile._id);
+            console.log("AI Review Result:", aiReviewResult);
+          } catch (error) {
+            console.error("Error in AI Review:", error);
+          }
+        }, 1000); // Delay 1 giây để đảm bảo profile đã được lưu
+      } catch (error) {
+        console.error("Error triggering AI review:", error);
+      }
     } else {
       console.log("No instructor profile found with status 'emailNotVerified' for user:", user.email);
     }

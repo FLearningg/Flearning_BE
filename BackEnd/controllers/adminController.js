@@ -3058,23 +3058,60 @@ exports.getInstructorRequests = async (req, res) => {
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Execute query with pagination
-    const requests = await InstructorProfile.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate("userId", "firstName lastName email userImage")
-      .select(
-        "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt"
-      );
+    // Get RejectedInstructor model
+    const RejectedInstructor = require("../models/rejectedInstructorModel");
 
-    // Get total count for pagination
-    const totalRequests = await InstructorProfile.countDocuments(query);
+    // Get counts from both collections
+    const [instructorCount, rejectedCount] = await Promise.all([
+      InstructorProfile.countDocuments(query),
+      RejectedInstructor.countDocuments(query)
+    ]);
 
-    // Calculate pagination info
+    const totalRequests = instructorCount + rejectedCount;
     const totalPages = Math.ceil(totalRequests / parseInt(limit));
     const hasNextPage = parseInt(page) < totalPages;
     const hasPrevPage = parseInt(page) > 1;
+
+    // Execute queries from both collections with pagination
+    const [instructorProfiles, rejectedProfiles] = await Promise.all([
+      // Get profiles from InstructorProfile collection
+      InstructorProfile.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        ),
+      
+      // Get profiles from RejectedInstructor collection
+      RejectedInstructor.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        )
+    ]);
+
+    // Combine results from both collections
+    const allRequests = [...instructorProfiles, ...rejectedProfiles];
+    
+    // Sort combined results (in case the sort between collections is needed)
+    allRequests.sort((a, b) => {
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+      
+      if (sortOrder === "desc") {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      } else {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      }
+    });
+
+    // Apply pagination to combined results
+    const requests = allRequests.slice(0, parseInt(limit));
 
     res.status(200).json({
       success: true,
