@@ -13,6 +13,7 @@ const InstructorProfile = require("../models/instructorProfileModel");
 const {
   instructorApplicationApprovedEmail,
   instructorApplicationDeniedEmail,
+  userBannedEmail,
 } = require("../utils/emailTemplates");
 const sendEmail = require("../utils/sendEmail");
 /**
@@ -454,6 +455,41 @@ exports.updateUserStatus = async (req, res) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    // If user is being banned, terminate all their active sessions and send email
+    if (status === "banned") {
+      try {
+        // Import the Token model to delete user's tokens
+        const Token = require("../models/tokenModel");
+        
+        // Delete all refresh tokens for this user to terminate their sessions
+        await Token.deleteMany({ userId: id });
+        
+        console.log(`All sessions terminated for banned user: ${user.email}`);
+        
+        // Send email notification to banned user
+        try {
+          const emailContent = userBannedEmail(user.firstName || user.userName);
+          const emailResult = await sendEmail(
+            user.email,
+            "Your Account Has Been Banned",
+            emailContent
+          );
+          
+          if (emailResult.success) {
+            console.log(`Ban notification email sent successfully to: ${user.email}`);
+          } else {
+            console.error(`Failed to send ban notification email to ${user.email}:`, emailResult.error);
+          }
+        } catch (emailError) {
+          console.error("Error sending ban notification email:", emailError);
+          // Continue with the response even if email sending fails
+        }
+      } catch (tokenError) {
+        console.error("Error terminating user sessions:", tokenError);
+        // Continue with the response even if session termination fails
+      }
     }
 
     res.status(200).json({
