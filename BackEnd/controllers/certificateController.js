@@ -5,7 +5,7 @@ const admin = require("firebase-admin");
 const puppeteer = require("puppeteer");
 const fs = require("fs").promises;
 const path = require("path");
-const crypto = require("crypto"); // THÊM IMPORT NÀY
+const crypto = require("crypto");
 
 exports.generateCertificate = async (req, res) => {
   const { courseId } = req.params;
@@ -59,32 +59,37 @@ exports.generateCertificate = async (req, res) => {
     });
 
     const page = await browser.newPage();
+
+    // *** SỬA LỖI: THÊM DÒNG NÀY ***
+    // Đặt kích thước cửa sổ trình duyệt đúng bằng kích thước ảnh
+    await page.setViewport({
+      width: 1123,
+      height: 794,
+      deviceScaleFactor: 1, // Đảm bảo tỷ lệ 1:1
+    });
+
     await page.setContent(html, { waitUntil: "networkidle0" });
 
-    const pdfBuffer = await page.pdf({
-      width: "1123px",
-      height: "794px",
-      printBackground: true,
-      margin: {
-        top: "0px",
-        right: "0px",
-        bottom: "0px",
-        left: "0px",
+    const imageBuffer = await page.screenshot({
+      type: "png",
+      // Giờ đây clip sẽ chụp đúng toàn bộ nội dung đã được render
+      clip: {
+        x: 0,
+        y: 0,
+        width: 1123,
+        height: 794,
       },
     });
 
     await browser.close();
 
     const bucket = admin.storage().bucket();
-
-    // THAY ĐỔI: Dùng UUID để tạo tên file ngẫu nhiên và bảo mật
-    const fileName = `certificates/${crypto.randomUUID()}.pdf`;
-
+    const fileName = `certificates/${crypto.randomUUID()}.png`;
     const file = bucket.file(fileName);
 
-    await file.save(pdfBuffer, {
+    await file.save(imageBuffer, {
       metadata: {
-        contentType: "application/pdf",
+        contentType: "image/png",
       },
       public: true,
     });
@@ -102,11 +107,11 @@ exports.generateCertificate = async (req, res) => {
     await newCertificate.save();
 
     res.status(201).json({
-      message: "Tạo chứng chỉ PDF thành công!",
+      message: "Tạo chứng chỉ PNG thành công!",
       certificate: newCertificate,
     });
   } catch (error) {
-    console.error("Lỗi khi tạo chứng chỉ PDF:", error);
+    console.error("Lỗi khi tạo chứng chỉ PNG:", error);
     res.status(500).json({ message: "Lỗi máy chủ nội bộ." });
   }
 };
