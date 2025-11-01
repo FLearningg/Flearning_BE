@@ -12,6 +12,7 @@ const {
   CommentToLesson,
   deleteLessonComment,
 } = require("../controllers/courseDetailsController");
+const { generateCertificate } = require("../controllers/certificateController");
 
 router.get("/", courseController.getAllCourses);
 router.get("/search", courseController.searchCourses);
@@ -49,6 +50,12 @@ router.post(
   "/:courseId/assign-discount",
   authMiddleware("admin"),
   courseController.assignDiscountToCourse
+);
+
+router.post(
+  "/:courseId/generate-certificate",
+  authMiddleware(),
+  generateCertificate
 );
 
 module.exports = router;
