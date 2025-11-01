@@ -23,6 +23,7 @@
     "firebase-admin": "^13.4.0",
     "google-auth-library": "^10.4.2",
     "googleapis": "^144.0.0",
+    "jimp": "^1.6.0",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
     "mongoose": "^8.16.1",
@@ -33,6 +34,7 @@
     "nodemon": "^3.1.10",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.17.2",
+    "puppeteer": "^24.27.0",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
