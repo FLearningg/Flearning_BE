@@ -12,9 +12,22 @@ const QuizAnswerSchema = new Schema(
 const QuizQuestionSchema = new Schema(
   {
     content: String,
-    type: String,
+    type: {
+      type: String,
+      enum: ['multiple-choice', 'true-false', 'essay'], // Thêm loại 'essay' cho câu hỏi tự luận
+      default: 'multiple-choice'
+    },
     score: Number,
     answers: [QuizAnswerSchema],
+    // Thêm trường cho câu hỏi tự luận
+    essayGuideline: { 
+      type: String, 
+      required: function() { return this.type === 'essay'; } 
+    }, // Hướng dẫn/tiêu chí chấm điểm cho câu tự luận
+    essayMaxLength: { 
+      type: Number, 
+      default: 1000 
+    }, // Số ký tự tối đa cho câu trả lời tự luận
   },
   { _id: false }
 );

@@ -3,7 +3,8 @@ const {
   explainQuiz, 
   generateQuiz,
   summarizeVideo, 
-  summarizeArticle 
+  summarizeArticle,
+  gradeEssayAnswers 
 } = require("../controllers/aiController");
 const authorize = require("../middlewares/authMiddleware");
 
@@ -14,6 +15,9 @@ router.post("/explain-quiz", authorize(), explainQuiz);
 
 // POST /api/ai/generate-quiz
 router.post("/generate-quiz", authorize(), generateQuiz);
+
+// POST /api/ai/grade-essay
+router.post("/grade-essay", authorize(), gradeEssayAnswers);
 
 // POST /api/ai/summarize-video
 router.post("/summarize-video", authorize(), summarizeVideo);

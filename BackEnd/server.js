@@ -34,6 +34,7 @@ const watchCourseRoute = require("./routes/WatchCourseRoute");
 const quizRoutes = require("./routes/quizRoutes");
 const aiRoutes = require("./routes/aiRoutes");
 const recommendationRoutes = require("./routes/recommendationRoutes");
+const proctoringRoutes = require("./routes/proctoringRoutes");
 
 const app = express();
 
@@ -203,6 +204,8 @@ app.use("/api/watch-course", watchCourseRoute);
 // Quiz routes
 app.use("/api/quiz", quizRoutes);
 app.use("/api/ai", aiRoutes);
+// Proctoring routes
+app.use("/api/proctoring", proctoringRoutes);
 // Learning Path routes
 app.use("/api/recommendations", recommendationRoutes);
 
