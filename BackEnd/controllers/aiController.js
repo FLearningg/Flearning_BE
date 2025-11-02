@@ -1,9 +1,23 @@
 require("dotenv").config(); // Load environment variables
 
 const mongoose = require("mongoose");
+const NodeCache = require("node-cache");
+const crypto = require("crypto");
 
 const MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+// Separate configuration for summarization
+const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || "gemini-2.5-flash";
+const SUMMARIZATION_API_KEY = process.env.GEMINI_SUMMARIZATION_API_KEY || process.env.GEMINI_API_KEY;
+const SUMMARIZATION_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${SUMMARIZATION_MODEL}:generateContent?key=${SUMMARIZATION_API_KEY}`;
+
+// Cache configuration for summarization
+const SUMMARIZATION_CACHE_TTL = process.env.SUMMARIZATION_CACHE_TTL || 3600; // 1 hour default
+const summarizationCache = new NodeCache({ 
+  stdTTL: SUMMARIZATION_CACHE_TTL,
+  checkperiod: 600 // Check for expired keys every 10 minutes
+});
 
 // Use dynamic import for node-fetch
 const fetch = (...args) =>
@@ -71,18 +85,8 @@ exports.explainQuiz = async (req, res) => {
 
     // Build prompt for AI
     const prompt = buildExplanationPrompt(questionDetails);
-    console.log("🔍 AI prompt preview:", prompt.substring(0, 500) + "...");
-    console.log("🔍 Question details count:", questionDetails.length);
-    console.log("🔍 First question sample:", questionDetails[0] ? {
-      questionText: questionDetails[0].questionText || questionDetails[0].questionContent,
-      userAnswerText: questionDetails[0].userAnswerText,
-      correctAnswerText: questionDetails[0].correctAnswerText,
-      isCorrect: questionDetails[0].isCorrect
-    } : "No questions");
 
     // Call Gemini API
-    console.log("🔍 Gemini API Key exists:", !!process.env.GEMINI_API_KEY);
-    console.log("🔍 Gemini API URL:", GEMINI_API_URL.replace(process.env.GEMINI_API_KEY || '', '[HIDDEN]'));
     const explanations = await generateExplanationsFromAI(
       prompt,
       questionDetails
@@ -355,30 +359,25 @@ function parseAIResponse(response, questionDetails) {
       
       // If JSON is truncated, try to close it properly
       if (parseError.message.includes("Unterminated string") || parseError.message.includes("Unexpected end")) {
-        console.log("🔧 Attempting to fix truncated JSON...");
         
         // Find the last complete object
         const lastCompleteObjectMatch = fixedJson.match(/.*}(?=\s*,?\s*\{)/g);
         if (lastCompleteObjectMatch) {
           const lastCompleteIndex = fixedJson.lastIndexOf(lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1]) + lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1].length;
           fixedJson = fixedJson.substring(0, lastCompleteIndex) + "\n]";
-          console.log("🔧 Fixed JSON by truncating to last complete object");
         } else {
           // Try to close the current object and array
           fixedJson = fixedJson.replace(/,?\s*$/, '') + '"}]';
-          console.log("🔧 Fixed JSON by closing current object");
         }
       }
       
       try {
         parsedResponse = JSON.parse(fixedJson);
-        console.log("✅ Successfully parsed fixed JSON with", parsedResponse.length, "items");
       } catch (fixError) {
         console.error("🚨 Failed to parse fixed JSON:", fixError);
         // Try to extract JSON array from the response
         const jsonMatch = responseText.match(/\[[\s\S]*?\}(?=\s*,?\s*\{|\s*\])/g);
         if (jsonMatch && jsonMatch.length > 0) {
-          console.log("🔧 Found partial JSON, extracting valid objects...");
           const validObjects = [];
           for (const match of jsonMatch) {
             try {
@@ -390,7 +389,6 @@ function parseAIResponse(response, questionDetails) {
           }
           if (validObjects.length > 0) {
             parsedResponse = validObjects;
-            console.log("✅ Extracted", validObjects.length, "valid objects from partial JSON");
           } else {
             throw new Error("Could not extract valid JSON from AI response");
           }
@@ -502,4 +500,653 @@ function createFallbackExplanations(questionDetails) {
         "Explanation generation is currently unavailable. Please try again later.",
     };
   });
+}
+
+/**
+ * POST /api/ai/summarize-video
+ * Generate summary for video content from Firebase Storage URL
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.materialUrl - Firebase Storage URL of the video
+ * @param {string} req.body.materialId - Optional material ID for reference
+ */
+exports.summarizeVideo = async (req, res) => {
+  try {
+    const { materialUrl, materialId } = req.body;
+    const authenticatedUserId = req.user.id;
+
+    // Validation
+    const validationErrors = validateSummarizeVideoRequest({ materialUrl });
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid request data",
+        errors: validationErrors,
+      });
+    }
+
+    // Generate cache key based on material URL
+    const cacheKey = generateCacheKey('video', materialUrl);
+    
+    // Check cache first
+    const cachedSummary = summarizationCache.get(cacheKey);
+    if (cachedSummary) {
+      return res.status(200).json({
+        success: true,
+        message: "Video summary retrieved from cache",
+        data: {
+          ...cachedSummary,
+          cached: true,
+          cacheKey
+        },
+      });
+    }
+
+
+    // Generate summary using Gemini multimodal API
+    const summary = await generateVideoSummary(materialUrl);
+
+    // Cache the result
+    const responseData = {
+      summary,
+      materialUrl,
+      materialId,
+      meta: {
+        model: SUMMARIZATION_MODEL,
+        generatedAt: new Date().toISOString(),
+        userId: authenticatedUserId,
+      },
+    };
+
+    summarizationCache.set(cacheKey, responseData);
+
+    res.status(200).json({
+      success: true,
+      message: "Video summary generated successfully",
+      data: {
+        ...responseData,
+        cached: false,
+        cacheKey
+      },
+    });
+  } catch (error) {
+    console.error("🚨 AI summarizeVideo error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate video summary",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * POST /api/ai/summarize-article
+ * Generate summary for article content from Firebase Storage URL
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.articleUrl - Firebase Storage URL of the article file
+ * @param {string} req.body.materialId - Optional material ID for reference
+ */
+exports.summarizeArticle = async (req, res) => {
+  try {
+    const { materialUrl, materialId } = req.body;
+    const authenticatedUserId = req.user.id;
+
+    // Validation
+    const validationErrors = validateSummarizeArticleRequest({ materialUrl });
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid request data",
+        errors: validationErrors,
+      });
+    }
+
+    // Generate cache key based on material URL
+    const cacheKey = generateCacheKey('article', materialUrl);
+    
+    // Check cache first
+    const cachedSummary = summarizationCache.get(cacheKey);
+    if (cachedSummary) {
+      return res.status(200).json({
+        success: true,
+        message: "Article summary retrieved from cache",
+        data: {
+          ...cachedSummary,
+          cached: true,
+          cacheKey
+        },
+      });
+    }
+
+
+    // Generate summary using Gemini API with document URL
+    const summary = await generateArticleSummary(materialUrl);
+
+    // Cache the result
+    const responseData = {
+      summary,
+      materialUrl,
+      materialId,
+      meta: {
+        model: SUMMARIZATION_MODEL,
+        generatedAt: new Date().toISOString(),
+        userId: authenticatedUserId,
+      },
+    };
+
+    summarizationCache.set(cacheKey, responseData);
+
+    res.status(200).json({
+      success: true,
+      message: "Article summary generated successfully",
+      data: {
+        ...responseData,
+        cached: false,
+        cacheKey
+      },
+    });
+  } catch (error) {
+    console.error("🚨 AI summarizeArticle error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate article summary",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Validate the request body for summarizeVideo endpoint
+ */
+function validateSummarizeVideoRequest({ materialUrl }) {
+  const errors = [];
+
+  if (!materialUrl) {
+    errors.push("materialUrl is required");
+  } else if (typeof materialUrl !== "string") {
+    errors.push("materialUrl must be a string");
+  } else if (!isValidFirebaseStorageUrl(materialUrl)) {
+    errors.push("materialUrl must be a valid Firebase Storage URL");
+  }
+
+  return errors;
+}
+
+/**
+ * Validate the request body for summarizeArticle endpoint
+ */
+function validateSummarizeArticleRequest({ materialUrl }) {
+  const errors = [];
+
+  if (!materialUrl) {
+    errors.push("materialUrl is required");
+  } else if (typeof materialUrl !== "string") {
+    errors.push("materialUrl must be a string");
+  } else if (!isValidFirebaseStorageUrl(materialUrl)) {
+    errors.push("materialUrl must be a valid Firebase Storage URL");
+  }
+
+  return errors;
+}
+
+/**
+ * Validate if URL is a Firebase Storage URL
+ */
+function isValidFirebaseStorageUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    return (
+      urlObj.hostname === 'firebasestorage.googleapis.com' ||
+      urlObj.hostname.includes('firebasestorage.googleapis.com')
+    );
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Generate cache key for content
+ */
+function generateCacheKey(type, url) {
+  const hash = crypto.createHash('md5').update(url).digest('hex');
+  return `summarization:${type}:${hash}`;
+}
+
+/**
+ * Convert DOCX/DOC file to PDF using text extraction fallback
+ * Note: For production, install LibreOffice for better conversion quality
+ */
+async function convertDocxToPdf(fileUrl) {
+  const fetch = (await import('node-fetch')).default;
+  const fs = require('fs');
+  const path = require('path');
+  
+  try {
+    
+    // Download original file
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download file: ${response.status}`);
+    }
+    
+    const buffer = await response.arrayBuffer();
+    const bufferData = Buffer.from(buffer);
+    const originalFileName = path.basename(new URL(fileUrl).pathname);
+    const fileExtension = originalFileName.split('.').pop().toLowerCase();
+    
+    let extractedText = '';
+    
+    // Extract text based on file type
+    if (fileExtension === 'docx') {
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer: bufferData });
+      extractedText = result.value;
+    } else if (fileExtension === 'doc') {
+      // Basic text extraction for DOC files (limited support)
+      extractedText = bufferData.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    } else {
+      throw new Error(`Unsupported file type: ${fileExtension}`);
+    }
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw new Error("No text could be extracted from the document");
+    }
+    
+    
+    // Create a simple PDF with the extracted text using PDFKit
+    const PDFDocument = require('pdfkit');
+    
+    // Create temp directory
+    const tempDir = path.join(__dirname, '../temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const pdfPath = path.join(tempDir, `converted_${Date.now()}.pdf`);
+    const doc = new PDFDocument();
+    const stream = fs.createWriteStream(pdfPath);
+    doc.pipe(stream);
+    
+    // Add text to PDF with proper formatting
+    doc.fontSize(12);
+    const maxWidth = 500;
+    const lineHeight = 14;
+    
+    // Split text into paragraphs and add to PDF
+    const paragraphs = extractedText.split(/\n\s*\n/);
+    
+    for (let i = 0; i < paragraphs.length; i++) {
+      const paragraph = paragraphs[i].trim();
+      if (paragraph) {
+        doc.text(paragraph, { width: maxWidth, align: 'left' });
+        doc.moveDown();
+        
+        // Add new page if needed
+        if (doc.y > 700) {
+          doc.addPage();
+        }
+      }
+    }
+    
+    doc.end();
+    
+    // Wait for PDF creation to complete
+    await new Promise((resolve, reject) => {
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+    
+    // Upload PDF to Firebase Storage
+    const admin = require('firebase-admin');
+    const bucket = admin.storage().bucket();
+    
+    const pdfBuffer = fs.readFileSync(pdfPath);
+    const pdfFileName = `converted_${Date.now()}_${path.parse(originalFileName).name}.pdf`;
+    const pdfFile_ref = bucket.file(`temp/converted/${pdfFileName}`);
+    
+    await pdfFile_ref.save(pdfBuffer, {
+      metadata: {
+        contentType: 'application/pdf',
+      },
+    });
+    
+    // Get download URL
+    const [pdfUrl] = await pdfFile_ref.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+    });
+    
+    
+    // Cleanup temp file
+    try {
+      fs.unlinkSync(pdfPath);
+    } catch (cleanupError) {
+      console.warn("⚠️ Cleanup warning:", cleanupError.message);
+    }
+    
+    return pdfUrl;
+    
+  } catch (error) {
+    console.error("🚨 convertDocxToPdf error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Upload file to Gemini File API from Firebase Storage URL
+ */
+async function uploadFileToGemini(fileUrl, mimeType) {
+  try {
+    
+    // Download file from Firebase Storage
+    const fileResponse = await fetch(fileUrl);
+    if (!fileResponse.ok) {
+      throw new Error(`Failed to download file from Firebase: ${fileResponse.status}`);
+    }
+    
+    const fileBuffer = await fileResponse.arrayBuffer();
+    
+    // Extract proper filename with extension from URL
+    const urlParts = fileUrl.split('?')[0]; // Remove query parameters
+    const fileName = urlParts.split('/').pop() || 'file';
+    
+    
+    // Upload to Gemini File API
+    const formData = new FormData();
+    formData.append('file', new Blob([fileBuffer], { type: mimeType }), fileName);
+    
+    const uploadResponse = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${SUMMARIZATION_API_KEY}`, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.text();
+      console.error("🚨 Gemini upload failed:", {
+        status: uploadResponse.status,
+        fileName,
+        mimeType,
+        errorBody
+      });
+      throw new Error(`Gemini File API upload error: ${uploadResponse.status} - ${errorBody}`);
+    }
+    
+    const uploadResult = await uploadResponse.json();
+    
+    return uploadResult.file;
+  } catch (error) {
+    console.error("🚨 uploadFileToGemini error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Generate video summary using Gemini multimodal API
+ */
+async function generateVideoSummary(videoUrl) {
+  try {
+    
+    // Upload video file to Gemini File API
+    const uploadedFile = await uploadFileToGemini(videoUrl, 'video/*');
+    
+    // Wait for file processing (Gemini needs time to process video files)
+    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+    
+    const requestBody = {
+      systemInstruction: {
+        parts: [
+          {
+            text: `Bạn là một chuyên gia giáo dục có nhiều kinh nghiệm trong việc tóm tắt nội dung học tập. 
+
+Nhiệm vụ của bạn:
+1. Xem và phân tích toàn bộ nội dung video
+2. Tạo ra một bản tóm tắt chi tiết, có cấu trúc và dễ hiểu bằng tiếng Việt
+3. Tập trung vào các kiến thức chính, khái niệm quan trọng
+4. Sắp xếp thông tin theo thứ tự logic, dễ theo dõi
+5. Sử dụng ngôn ngữ rõ ràng, phù hợp với học sinh/sinh viên
+
+QUAN TRỌNG - Cấu trúc tóm tắt bắt buộc:
+Sử dụng định dạng sau với các tiêu đề rõ ràng, mỗi phần cách nhau bằng 2 dòng trống:
+
+Tổng quan nội dung:
+[Mô tả tổng quan về chủ đề chính của video]
+
+Điểm chính:
+- [Điểm quan trọng thứ 1]
+- [Điểm quan trọng thứ 2]  
+- [Điểm quan trọng thứ 3]
+
+Khái niệm cần thiết:
+- [Khái niệm/thuật ngữ quan trọng 1]
+- [Khái niệm/thuật ngữ quan trọng 2]
+
+Kết luận:
+[Tóm tắt những điểm then chốt và takeaways quan trọng]
+
+Độ dài: 2000-5000 từ hoặc nhiều hơn nếu cần thiết. Hãy tạo tóm tắt CỰC KỲ CHI TIẾT và TOÀN DIỆN:
+- Phân tích sâu từng khái niệm quan trọng
+- Giải thích chi tiết các ví dụ và case study
+- Bao gồm tất cả các bước thực hiện cụ thể
+- Liệt kê đầy đủ các công thức, thuật toán, phương pháp
+- Mô tả chi tiết các hình ảnh, biểu đồ, sơ đồ trong video
+- Phân tích ưu nhược điểm của từng phương pháp
+- Đưa ra các lưu ý, tips và best practices
+- Kết nối với kiến thức liên quan và ứng dụng thực tế`,
+          },
+        ],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: "Hãy tóm tắt nội dung của video này một cách chi tiết và có cấu trúc. Tập trung vào các kiến thức chính và sắp xếp thông tin theo thứ tự logic.",
+            },
+            {
+              fileData: {
+                mimeType: uploadedFile.mimeType,
+                fileUri: uploadedFile.uri,
+              },
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.3,
+        topP: 0.8,
+        maxOutputTokens: 50000, // Ultra-detailed video summaries with comprehensive analysis
+      },
+    };
+
+    const response = await fetch(SUMMARIZATION_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Gemini API error: ${response.status} - ${errorBody}`);
+    }
+
+    const result = await response.json();
+
+    // Extract summary from response
+    if (
+      !result.candidates ||
+      !result.candidates[0]?.content?.parts[0]?.text
+    ) {
+      throw new Error("Invalid response structure from Gemini API");
+    }
+
+    // Clean up uploaded file (optional)
+    try {
+      await fetch(`https://generativelanguage.googleapis.com/v1beta/${uploadedFile.name}?key=${SUMMARIZATION_API_KEY}`, {
+        method: 'DELETE'
+      });
+    } catch (cleanupError) {
+      console.warn("⚠️ Failed to cleanup uploaded file:", cleanupError.message);
+    }
+
+    return result.candidates[0].content.parts[0].text;
+  } catch (error) {
+    console.error("🚨 generateVideoSummary error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Generate article summary using Gemini API
+ */
+async function generateArticleSummary(articleUrl) {
+  try {
+    
+    // Extract file extension from URL (handle Firebase Storage URLs)
+    const urlParts = articleUrl.split('?')[0]; // Remove query parameters
+    const fileName = urlParts.split('/').pop(); // Get filename
+    const fileExtension = fileName.split('.').pop().toLowerCase();
+    
+    
+    // Check if file needs conversion before Gemini upload
+    let fileToUpload = articleUrl;
+    let finalMimeType;
+    
+    switch (fileExtension) {
+      case 'pdf':
+        finalMimeType = 'application/pdf';
+        break;
+      case 'txt':
+        finalMimeType = 'text/plain';
+        break;
+      case 'docx':
+      case 'doc':
+        fileToUpload = await convertDocxToPdf(articleUrl);
+        finalMimeType = 'application/pdf';
+        break;
+      default:
+        throw new Error(`Unsupported file type for AI summarization: ${fileExtension}. Supported types: PDF, TXT, DOCX, DOC`);
+    }
+    
+    
+    // Upload file to Gemini File API
+    const uploadedFile = await uploadFileToGemini(fileToUpload, finalMimeType);
+    
+    // Wait for file processing
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds for documents
+    
+    const requestBody = {
+      systemInstruction: {
+        parts: [
+          {
+            text: `Bạn là một chuyên gia giáo dục có nhiều kinh nghiệm trong việc tóm tắt tài liệu học tập.
+
+Nhiệm vụ của bạn:
+1. Đọc và phân tích toàn bộ nội dung tài liệu
+2. Tạo ra một bản tóm tắt chi tiết, có cấu trúc và dễ hiểu bằng tiếng Việt
+3. Tập trung vào các ý chính, khái niệm quan trọng
+4. Sắp xếp thông tin theo thứ tự logic từ tổng quát đến cụ thể
+5. Sử dụng ngôn ngữ rõ ràng, phù hợp với học sinh/sinh viên
+
+QUAN TRỌNG - Cấu trúc tóm tắt bắt buộc:
+Sử dụng định dạng sau với các tiêu đề rõ ràng, mỗi phần cách nhau bằng 2 dòng trống:
+
+Nội dung chính:
+[Giới thiệu tổng quan về chủ đề của tài liệu]
+
+Điểm chính:
+- [Ý chính thứ 1]
+- [Ý chính thứ 2]
+- [Ý chính thứ 3]
+
+Khái niệm quan trọng:
+- [Định nghĩa/khái niệm quan trọng 1]
+- [Định nghĩa/khái niệm quan trọng 2]
+
+Lưu ý:
+- [Điểm cần chú ý đặc biệt]
+- [Lời khuyên hoặc gợi ý thực hành]
+
+Kết luận:
+[Tóm tắt những điểm then chốt và takeaways quan trọng]
+
+Độ dài: 2500-6000 từ hoặc nhiều hơn nếu cần thiết. Hãy tạo tóm tắt CỰC KỲ CHI TIẾT và TOÀN DIỆN:
+- Phân tích từng chương, từng phần một cách chi tiết
+- Giải thích sâu sắc tất cả các khái niệm, định nghĩa
+- Mô tả chi tiết các ví dụ, bài tập, case study
+- Liệt kê đầy đủ các công thức, định lý, quy tắc
+- Phân tích các bảng biểu, hình ảnh, sơ đồ trong tài liệu
+- So sánh các phương pháp và cách tiếp cận khác nhau
+- Đưa ra phân tích ưu nhược điểm chi tiết
+- Kết nối với kiến thức nền tảng và ứng dụng thực tế
+- Bao gồm tất cả các ghi chú quan trọng và lưu ý đặc biệt`,
+          },
+        ],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: "Hãy tóm tắt nội dung của tài liệu này một cách chi tiết và có cấu trúc. Tập trung vào các ý chính và sắp xếp thông tin theo thứ tự logic.",
+            },
+            {
+              fileData: {
+                mimeType: uploadedFile.mimeType,
+                fileUri: uploadedFile.uri,
+              },
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.3,
+        topP: 0.8,
+        maxOutputTokens: 50000, // Ultra-detailed article summaries with comprehensive analysis
+      },
+    };
+
+    const response = await fetch(SUMMARIZATION_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Gemini API error: ${response.status} - ${errorBody}`);
+    }
+
+    const result = await response.json();
+
+    // Extract summary from response
+    if (
+      !result.candidates ||
+      !result.candidates[0]?.content?.parts[0]?.text
+    ) {
+      throw new Error("Invalid response structure from Gemini API");
+    }
+
+    // Clean up uploaded file (optional)
+    try {
+      await fetch(`https://generativelanguage.googleapis.com/v1beta/${uploadedFile.name}?key=${SUMMARIZATION_API_KEY}`, {
+        method: 'DELETE'
+      });
+    } catch (cleanupError) {
+      console.warn("⚠️ Failed to cleanup uploaded file:", cleanupError.message);
+    }
+
+    return result.candidates[0].content.parts[0].text;
+  } catch (error) {
+    console.error("🚨 generateArticleSummary error:", error);
+    throw error;
+  }
 }
