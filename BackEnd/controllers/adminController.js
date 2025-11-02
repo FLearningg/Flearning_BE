@@ -13,6 +13,7 @@ const InstructorProfile = require("../models/instructorProfileModel");
 const {
   instructorApplicationApprovedEmail,
   instructorApplicationDeniedEmail,
+  userBannedEmail,
 } = require("../utils/emailTemplates");
 const sendEmail = require("../utils/sendEmail");
 /**
@@ -454,6 +455,41 @@ exports.updateUserStatus = async (req, res) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    // If user is being banned, terminate all their active sessions and send email
+    if (status === "banned") {
+      try {
+        // Import the Token model to delete user's tokens
+        const Token = require("../models/tokenModel");
+        
+        // Delete all refresh tokens for this user to terminate their sessions
+        await Token.deleteMany({ userId: id });
+        
+        console.log(`All sessions terminated for banned user: ${user.email}`);
+        
+        // Send email notification to banned user
+        try {
+          const emailContent = userBannedEmail(user.firstName || user.userName);
+          const emailResult = await sendEmail(
+            user.email,
+            "Your Account Has Been Banned",
+            emailContent
+          );
+          
+          if (emailResult.success) {
+            console.log(`Ban notification email sent successfully to: ${user.email}`);
+          } else {
+            console.error(`Failed to send ban notification email to ${user.email}:`, emailResult.error);
+          }
+        } catch (emailError) {
+          console.error("Error sending ban notification email:", emailError);
+          // Continue with the response even if email sending fails
+        }
+      } catch (tokenError) {
+        console.error("Error terminating user sessions:", tokenError);
+        // Continue with the response even if session termination fails
+      }
     }
 
     res.status(200).json({
@@ -3022,23 +3058,60 @@ exports.getInstructorRequests = async (req, res) => {
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Execute query with pagination
-    const requests = await InstructorProfile.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate("userId", "firstName lastName email userImage")
-      .select(
-        "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt"
-      );
+    // Get RejectedInstructor model
+    const RejectedInstructor = require("../models/rejectedInstructorModel");
 
-    // Get total count for pagination
-    const totalRequests = await InstructorProfile.countDocuments(query);
+    // Get counts from both collections
+    const [instructorCount, rejectedCount] = await Promise.all([
+      InstructorProfile.countDocuments(query),
+      RejectedInstructor.countDocuments(query)
+    ]);
 
-    // Calculate pagination info
+    const totalRequests = instructorCount + rejectedCount;
     const totalPages = Math.ceil(totalRequests / parseInt(limit));
     const hasNextPage = parseInt(page) < totalPages;
     const hasPrevPage = parseInt(page) > 1;
+
+    // Execute queries from both collections with pagination
+    const [instructorProfiles, rejectedProfiles] = await Promise.all([
+      // Get profiles from InstructorProfile collection
+      InstructorProfile.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        ),
+      
+      // Get profiles from RejectedInstructor collection
+      RejectedInstructor.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        )
+    ]);
+
+    // Combine results from both collections
+    const allRequests = [...instructorProfiles, ...rejectedProfiles];
+    
+    // Sort combined results (in case the sort between collections is needed)
+    allRequests.sort((a, b) => {
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+      
+      if (sortOrder === "desc") {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      } else {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      }
+    });
+
+    // Apply pagination to combined results
+    const requests = allRequests.slice(0, parseInt(limit));
 
     res.status(200).json({
       success: true,

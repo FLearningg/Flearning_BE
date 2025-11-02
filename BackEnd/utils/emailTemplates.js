@@ -340,6 +340,48 @@ exports.userEnrolledInCourseEmail = (userName, courseName, welcomeMessage) => {
   return emailWrapper(content);
 };
 
+/**
+ * User banned email
+ */
+exports.userBannedEmail = (firstName) => {
+  const content = `
+    ${emailHeader("Account Banned")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        We regret to inform you that your F-Learning account has been banned due to violation of our terms of service.
+      </p>
+      <div style="background-color: #fff7e6; padding: 20px; border-radius: 8px; margin: 25px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">What does this mean?</h3>
+        <p style="color: #8c8c8c; font-size: 14px; margin: 10px 0;">
+          Your account has been restricted and you can no longer access the platform. All active sessions have been terminated.
+        </p>
+      </div>
+      <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin: 25px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">Next Steps</h3>
+        <ol style="color: #595959; font-size: 15px; line-height: 1.8; margin: 0; padding-left: 20px;">
+          <li><strong>Review our terms</strong> - Please review our terms of service to understand what led to this action</li>
+          <li><strong>Contact support</strong> - If you believe this was a mistake, please contact our support team</li>
+          <li><strong>Appeal process</strong> - You may request a review of this decision by contacting support</li>
+        </ol>
+      </div>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button("https://flearningg.vercel.app/contact", "Contact Support")}
+      </div>
+      <div style="background-color: ${F_LEARNING_LIGHT}; padding: 16px; border-radius: 8px; border-left: 4px solid ${F_LEARNING_ORANGE};">
+        <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
+          <strong>Note:</strong> If you believe this ban was issued in error, please contact our support team immediately at support@f-learning.com.
+        </p>
+      </div>
+      <p style="color: #595959; font-size: 14px; margin-top: 30px;">
+        If button doesn't work, copy and paste this link into your browser:
+      </p>
+      <p style="color: ${F_LEARNING_ORANGE}; font-size: 13px; word-break: break-all;">
+        https://flearningg.vercel.app/contact
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
 exports.userCompletedCourseEmail = (
   userName,
   courseName,
