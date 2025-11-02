@@ -296,12 +296,22 @@ exports.getDashboardStats = async (req, res) => {
         },
       ]),
 
-      // Đánh giá khóa học
-      Course.aggregate([
+      // Đánh giá khóa học - Lấy từ Feedback thực tế
+      Feedback.aggregate([
+        {
+          $lookup: {
+            from: "courses",
+            localField: "courseId",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
         {
           $match: {
-            createdBy: instructorId,
-            rating: { $exists: true, $ne: null },
+            "course.createdBy": instructorId,
           },
         },
         {
@@ -310,13 +320,18 @@ exports.getDashboardStats = async (req, res) => {
               {
                 $group: {
                   _id: null,
-                  averageRating: { $avg: "$rating" },
-                  totalCoursesWithRating: { $sum: 1 },
+                  averageRating: { $avg: "$rateStar" },
+                  totalFeedbacks: { $sum: 1 },
                 },
               },
             ],
             ratingBreakdown: [
-              { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } },
+              { 
+                $group: { 
+                  _id: "$rateStar", 
+                  count: { $sum: 1 } 
+                } 
+              },
               { $sort: { _id: -1 } },
             ],
           },
@@ -642,15 +657,16 @@ exports.getDashboardStats = async (req, res) => {
     ]);
 
     // Xử lý dữ liệu rating
-    let courseRating = { averageRating: 0, breakdown: [] };
+    let courseRating = { averageRating: 0, breakdown: [], totalReviews: 0 };
     if (
       courseRatingData.length > 0 &&
       courseRatingData[0].overallStats.length > 0
     ) {
       const stats = courseRatingData[0].overallStats[0];
       const breakdownData = courseRatingData[0].ratingBreakdown;
-      const totalRatedCourses = stats.totalCoursesWithRating;
-      courseRating.averageRating = stats.averageRating;
+      const totalFeedbacks = stats.totalFeedbacks || 0;
+      courseRating.averageRating = stats.averageRating || 0;
+      courseRating.totalReviews = totalFeedbacks;
       const breakdownMap = new Map(
         breakdownData.map((item) => [item._id, item.count])
       );
@@ -660,8 +676,8 @@ exports.getDashboardStats = async (req, res) => {
           stars: star,
           count: count,
           percentage:
-            totalRatedCourses > 0
-              ? Math.round((count / totalRatedCourses) * 100)
+            totalFeedbacks > 0
+              ? Math.round((count / totalFeedbacks) * 100)
               : 0,
         };
       });
@@ -1242,6 +1258,100 @@ exports.deleteLesson = async (req, res) => {
 };
 
 /**
+ * @desc    Save course as draft (Instructor)
+ * @route   POST /api/instructor/courses/draft
+ * @access  Private (Instructor only)
+ */
+exports.saveToDraft = async (req, res) => {
+  try {
+    let {
+      title,
+      subTitle,
+      subtitle,
+      message,
+      detail,
+      materials,
+      thumbnail,
+      trailer,
+      price,
+      discountId,
+      level,
+      duration,
+      language,
+      subtitleLanguage,
+    } = req.body;
+
+    if (!subTitle && subtitle) {
+      subTitle = subtitle;
+    }
+
+    // For draft, we don't require strict validation - allow partial data
+    // Only validate that at least some basic field is present
+    if (!title || title.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "At least a title is required to save as draft",
+      });
+    }
+
+    // Gộp và validate categoryIds (allow empty for draft)
+    const validCategories = await extractValidCategoryIds(req.body);
+
+    if (level) level = level.toLowerCase();
+    if (language) language = language.toLowerCase();
+    if (subtitleLanguage) subtitleLanguage = subtitleLanguage.toLowerCase();
+
+    // Get instructor's userId from authenticated user
+    const instructorId = req.user._id;
+
+    const newCourse = new Course({
+      title,
+      subTitle: subTitle || "",
+      message: {
+        welcome: message?.welcome || "",
+        congrats: message?.congrats || "",
+      },
+      detail: {
+        description: detail?.description || "",
+        willLearn: detail?.willLearn || [],
+        targetAudience: detail?.targetAudience || [],
+        requirement: detail?.requirement || [],
+      },
+      materials: materials || [],
+      thumbnail: thumbnail || "",
+      trailer: trailer || "",
+      categoryIds: validCategories,
+      price: price ? parseFloat(price) : 0,
+      discountId,
+      level: level || "beginner",
+      language: language || "vietnam",
+      subtitleLanguage: subtitleLanguage || "vietnam",
+      sections: [],
+      createdBy: instructorId,
+      status: "draft", // Set status to draft
+    });
+
+    const savedCourse = await newCourse.save();
+
+    // Populate category and discount information
+    const populatedCourse = await Course.findById(savedCourse._id)
+      .populate("categoryIds", "name")
+      .populate("discountId", "discountCode value type");
+
+    res.status(201).json({
+      success: true,
+      message: "Course saved as draft successfully",
+      data: populatedCourse,
+    });
+  } catch (error) {
+    console.error("Error in saveToDraft:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
  * @desc    Create a new course (Instructor)
  * @route   POST /api/instructor/courses
  * @access  Private (Instructor only)
@@ -1263,6 +1373,7 @@ exports.createCourse = async (req, res) => {
       duration,
       language,
       subtitleLanguage,
+      status, // Allow instructor to set status (draft/pending)
     } = req.body;
 
     if (!subTitle && subtitle) {
@@ -1332,6 +1443,13 @@ exports.createCourse = async (req, res) => {
     // Get instructor's userId from authenticated user
     const instructorId = req.user._id;
 
+    // Validate status if provided
+    const validStatuses = ["draft", "pending"];
+    let courseStatus = "pending"; // Default status
+    if (status !== undefined && validStatuses.includes(status)) {
+      courseStatus = status;
+    }
+
     const newCourse = new Course({
       title,
       subTitle,
@@ -1356,6 +1474,7 @@ exports.createCourse = async (req, res) => {
       subtitleLanguage: subtitleLanguage || "vietnam",
       sections: [],
       createdBy: instructorId,
+      status: courseStatus,
     });
 
     const savedCourse = await newCourse.save();
@@ -1830,6 +1949,7 @@ exports.updateCourse = async (req, res) => {
       category,
       subCategory,
       sections, // Frontend có thể gửi sections data
+      status, // Allow instructor to change status (draft/pending)
     } = req.body;
 
     // Check if course exists and belongs to the instructor
@@ -1876,6 +1996,14 @@ exports.updateCourse = async (req, res) => {
     if (language !== undefined) updateData.language = language.toLowerCase();
     if (subtitleLanguage !== undefined)
       updateData.subtitleLanguage = subtitleLanguage.toLowerCase();
+
+    // Handle status update (instructor can set draft/pending)
+    if (status !== undefined) {
+      const validStatuses = ["draft", "pending"];
+      if (validStatuses.includes(status)) {
+        updateData.status = status;
+      }
+    }
 
     // Handle category updates
     if (categoryIds || category || subCategory) {
