@@ -7,6 +7,7 @@ const {
   updateCourse,
   getCourses,
   getCourseById,
+  getCourseAnalytics,
   createSection,
   updateSection,
   deleteSection,
@@ -53,6 +54,7 @@ router.put("/profile", upload.single("avatar"), updateMyProfile);
 router.post("/courses", createCourse);
 router.get("/courses", getCourses);
 router.get("/courses/:courseId", getCourseById);
+router.get("/courses/:courseId/analytics", getCourseAnalytics);
 router.put("/courses/:courseId", updateCourse);
 
 // Section management routes
