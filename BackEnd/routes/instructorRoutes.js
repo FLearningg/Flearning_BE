@@ -19,6 +19,7 @@ const {
   updateMyProfile,
   getPublicProfile,
   getInstructorStats,
+  getInstructorFeedbacks,
 } = require("../controllers/instructorController");
 const authorize = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
@@ -33,6 +34,7 @@ const {
 // Public routes (no auth required)
 router.get("/public/:userId", getPublicProfile);
 router.get("/stats/:userId", getInstructorStats);
+router.get("/feedbacks/:userId", getInstructorFeedbacks);
 
 // All instructor routes below require instructor authorization
 router.use(authorize("instructor"));

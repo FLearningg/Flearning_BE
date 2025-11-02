@@ -30,7 +30,23 @@ const courseController = {
         // Trả về 200 với mảng rỗng
         return res.status(200).json([]);
       }
-      res.status(200).json(courses);
+
+      // Get enrollment count for each course
+      const coursesWithEnrollmentCount = await Promise.all(
+        courses.map(async (course) => {
+          const enrollmentCount = await Enrollment.countDocuments({
+            courseId: course._id,
+            status: "enrolled",
+          });
+          const courseObj = course.toObject();
+          return {
+            ...courseObj,
+            studentsCount: enrollmentCount,
+          };
+        })
+      );
+
+      res.status(200).json(coursesWithEnrollmentCount);
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
@@ -168,7 +184,23 @@ const courseController = {
       if (!courses || courses.length === 0) {
         return res.status(404).json({ message: "Not found new courses" });
       }
-      res.status(200).json(courses);
+
+      // Get enrollment count for each course
+      const coursesWithEnrollmentCount = await Promise.all(
+        courses.map(async (course) => {
+          const enrollmentCount = await Enrollment.countDocuments({
+            courseId: course._id,
+            status: "enrolled",
+          });
+          const courseObj = course.toObject();
+          return {
+            ...courseObj,
+            studentsCount: enrollmentCount,
+          };
+        })
+      );
+
+      res.status(200).json(coursesWithEnrollmentCount);
     } catch (error) {
       res.status(500).json({ message: error.message });
     }

@@ -9,6 +9,7 @@ const Quiz = require("../models/QuizModel");
 const InstructorProfile = require("../models/instructorProfileModel");
 const Enrollment = require("../models/enrollmentModel");
 const Payment = require("../models/paymentModel");
+const Feedback = require("../models/feedbackModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const fs = require("fs");
@@ -825,9 +826,24 @@ exports.getCourses = async (req, res) => {
       .populate("sections", "name")
       .sort({ createdAt: -1 });
 
+    // Get enrollment count for each course
+    const coursesWithEnrollmentCount = await Promise.all(
+      courses.map(async (course) => {
+        const enrollmentCount = await Enrollment.countDocuments({
+          courseId: course._id,
+          status: "enrolled",
+        });
+        const courseObj = course.toObject();
+        return {
+          ...courseObj,
+          studentsCount: enrollmentCount,
+        };
+      })
+    );
+
     res.status(200).json({
       success: true,
-      data: courses,
+      data: coursesWithEnrollmentCount,
     });
   } catch (error) {
     console.error("Error in getCourses:", error);
@@ -877,7 +893,21 @@ exports.getCourseById = async (req, res) => {
       });
     }
 
+    // Get enrollment count and rating statistics
+    const enrollmentCount = await Enrollment.countDocuments({
+      courseId: courseId,
+      status: "enrolled",
+    });
+
     const courseObj = course.toObject();
+    courseObj.enrollmentCount = enrollmentCount;
+
+    // Debug: Log rating information
+    console.log("Course Rating Debug:", {
+      courseId: courseId,
+      rating: courseObj.rating,
+      hasRating: courseObj.rating !== undefined && courseObj.rating !== null
+    });
 
     // Transform lesson data for frontend compatibility
     if (courseObj.sections) {
@@ -3022,13 +3052,43 @@ exports.getPublicProfile = async (req, res) => {
       createdBy: userId,
       status: "active",
     })
-      .select("title thumbnail price rating totalStudents")
-      .limit(6);
+      .select("title thumbnail price rating")
+      .populate("categoryIds", "name")
+      .sort({ createdAt: -1 });
 
-    // Calculate statistics
-    const totalStudents = await User.countDocuments({
-      enrolledCourses: { $in: courses.map((c) => c._id) },
+    // Get enrollment count for each course
+    const coursesWithEnrollmentCount = await Promise.all(
+      courses.map(async (course) => {
+        const enrollmentCount = await Enrollment.countDocuments({
+          courseId: course._id,
+          status: "enrolled",
+        });
+        const courseObj = course.toObject();
+        return {
+          ...courseObj,
+          enrollmentCount: enrollmentCount,
+        };
+      })
+    );
+
+    // Calculate total students from Enrollment table (consistent with enrollmentCount)
+    const totalStudents = await Enrollment.countDocuments({
+      courseId: { $in: courses.map((c) => c._id) },
+      status: "enrolled",
     });
+
+    // Calculate real-time statistics
+    const totalCourses = courses.length;
+    
+    // Get all feedbacks for instructor's courses
+    const feedbacks = await Feedback.find({
+      courseId: { $in: courses.map((c) => c._id) },
+    });
+    
+    const totalReviews = feedbacks.length;
+    const averageRating = totalReviews > 0
+      ? feedbacks.reduce((sum, feedback) => sum + feedback.rateStar, 0) / totalReviews
+      : 0;
 
     const response = {
       user: profile.userId,
@@ -3041,12 +3101,12 @@ exports.getPublicProfile = async (req, res) => {
         experience: profile.experience,
       },
       statistics: {
-        totalCourses: profile.totalCourses,
+        totalCourses: totalCourses,
         totalStudents: totalStudents,
-        averageRating: profile.averageRating,
-        totalReviews: profile.totalReviews,
+        averageRating: parseFloat(averageRating.toFixed(1)),
+        totalReviews: totalReviews,
       },
-      courses,
+      courses: coursesWithEnrollmentCount,
     };
 
     res.status(200).json({
@@ -3129,6 +3189,95 @@ exports.getInstructorStats = async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching instructor stats:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get all feedbacks for instructor's courses
+ * @route   GET /api/instructor/feedbacks/:userId
+ * @access  Public
+ */
+exports.getInstructorFeedbacks = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 10, sortBy = 'createdAt', order = 'desc' } = req.query;
+
+    // Check if instructor profile exists and is approved
+    const profile = await InstructorProfile.findOne({
+      userId,
+      applicationStatus: "approved",
+    });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Instructor not found",
+      });
+    }
+
+    // Get all courses by this instructor
+    const courses = await Course.find({ 
+      createdBy: userId,
+      status: "active"
+    }).select("_id title thumbnail");
+
+    const courseIds = courses.map((c) => c._id);
+
+    if (courseIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          feedbacks: [],
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: 0,
+            totalFeedbacks: 0,
+            hasMore: false,
+          },
+        },
+      });
+    }
+
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+    const sortOrder = order === 'asc' ? 1 : -1;
+
+    // Get feedbacks with populated user and course info
+    const feedbacks = await Feedback.find({
+      courseId: { $in: courseIds },
+    })
+      .populate("userId", "firstName lastName userImage")
+      .populate("courseId", "title thumbnail")
+      .sort({ [sortBy]: sortOrder })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get total count for pagination
+    const totalFeedbacks = await Feedback.countDocuments({
+      courseId: { $in: courseIds },
+    });
+
+    const totalPages = Math.ceil(totalFeedbacks / limit);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        feedbacks,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalFeedbacks,
+          hasMore: page < totalPages,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching instructor feedbacks:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
