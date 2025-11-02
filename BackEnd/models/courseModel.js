@@ -22,7 +22,7 @@ const CourseSchema = new Schema(
     discountId: { type: Types.ObjectId, ref: "Discount" },
     // The user who created / published the course (instructor or admin)
     createdBy: { type: Types.ObjectId, ref: "User" },
-    rating: { type: Number },
+    rating: { type: Number, default: 0 },
     level: { type: String, enum: ["beginner", "intermediate", "advanced"] },
     duration: { type: String },
     language: { type: String, enum: ["vietnam", "english"] },
