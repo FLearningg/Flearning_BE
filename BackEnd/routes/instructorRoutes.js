@@ -4,6 +4,7 @@ const {
   getDashboardStats,
   getAllCategories,
   createCourse,
+  saveToDraft,
   updateCourse,
   getCourses,
   getCourseById,
@@ -51,6 +52,7 @@ router.get("/profile", getMyProfile);
 router.put("/profile", upload.single("avatar"), updateMyProfile);
 
 // Course management routes
+router.post("/courses/draft", saveToDraft); // Must be before /courses to avoid route conflict
 router.post("/courses", createCourse);
 router.get("/courses", getCourses);
 router.get("/courses/:courseId", getCourseById);
