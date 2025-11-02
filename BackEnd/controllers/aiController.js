@@ -1,8 +1,10 @@
 require("dotenv").config(); // Load environment variables
 
 const mongoose = require("mongoose");
+const { generateQuizQuestions, gradeEssayAnswer } = require("../services/openRouterService");
 const NodeCache = require("node-cache");
 const crypto = require("crypto");
+const StudentQuizResult = require("../models/StudentQuizResult");
 
 const MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -501,6 +503,113 @@ function createFallbackExplanations(questionDetails) {
     };
   });
 }
+
+/**
+ * POST /api/ai/generate-quiz
+ * Generate quiz questions using AI based on topic and parameters
+ */
+exports.generateQuiz = async (req, res) => {
+  try {
+    const {
+      topic,
+      lessonContent,
+      numberOfQuestions = 5,
+      difficulty = 'medium',
+      questionType = 'multiple-choice',
+      courseId,
+      lessonId,
+      title,
+      description
+    } = req.body;
+
+    const authenticatedUserId = req.user.id;
+
+    // Validation
+    if (!topic || topic.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Topic is required for quiz generation"
+      });
+    }
+
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid courseId is required"
+      });
+    }
+
+    if (numberOfQuestions < 1 || numberOfQuestions > 50) {
+      return res.status(400).json({
+        success: false,
+        message: "Number of questions must be between 1 and 50"
+      });
+    }
+
+    const validDifficulties = ['easy', 'medium', 'hard'];
+    if (!validDifficulties.includes(difficulty)) {
+      return res.status(400).json({
+        success: false,
+        message: "Difficulty must be one of: easy, medium, hard"
+      });
+    }
+
+    console.log("🤖 Generating quiz with AI...");
+    console.log("📝 Parameters:", { topic, numberOfQuestions, difficulty, questionType });
+
+    // Generate questions using OpenRouter AI
+    const questions = await generateQuizQuestions({
+      topic,
+      lessonContent,
+      numberOfQuestions,
+      difficulty,
+      questionType
+    });
+
+    console.log(`✅ Generated ${questions.length} questions`);
+
+    // Create quiz object (but don't save to database yet - let instructor review first)
+    const quizData = {
+      courseId,
+      lessonId: lessonId || null,
+      userId: authenticatedUserId,
+      title: title || `Quiz: ${topic}`,
+      description: description || `AI-generated quiz about ${topic}`,
+      questions: questions,
+      questionPoolSize: questions.length, // Show all questions by default
+      roleCreated: 'instructor'
+    };
+
+    // Return the generated quiz for instructor to review and edit
+    res.status(200).json({
+      success: true,
+      message: "Quiz generated successfully. Please review and edit before saving.",
+      data: {
+        quiz: quizData,
+        meta: {
+          generatedAt: new Date().toISOString(),
+          questionsCount: questions.length,
+          difficulty,
+          topic
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("🚨 AI generateQuiz error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate quiz with AI",
+      error: error.message
+    });
+  }
+};
 
 /**
  * POST /api/ai/summarize-video
@@ -1150,3 +1259,182 @@ Kết luận:
     throw error;
   }
 }
+
+/**
+ * POST /api/ai/grade-essay
+ * Grade essay answers using AI
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.quizResultId - MongoDB ObjectId of the quiz result
+ * @param {Array} req.body.essayAnswers - Array of essay answers to grade
+ * @param {number} req.body.essayAnswers[].questionIndex - Question index
+ * @param {string} req.body.essayAnswers[].questionContent - Question content
+ * @param {string} req.body.essayAnswers[].studentAnswer - Student's answer
+ * @param {string} req.body.essayAnswers[].essayGuideline - Grading guideline
+ * @param {number} req.body.essayAnswers[].maxScore - Maximum score for question
+ */
+exports.gradeEssayAnswers = async (req, res) => {
+  try {
+    const { quizResultId, essayAnswers } = req.body;
+    const authenticatedUserId = req.user.id;
+
+    // Validation
+    if (!quizResultId || !mongoose.Types.ObjectId.isValid(quizResultId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid quizResultId is required"
+      });
+    }
+
+    if (!Array.isArray(essayAnswers) || essayAnswers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "essayAnswers array is required and must not be empty"
+      });
+    }
+
+    // Find quiz result and verify ownership
+    const quizResult = await StudentQuizResult.findById(quizResultId);
+    
+    if (!quizResult) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz result not found"
+      });
+    }
+
+    if (quizResult.userId.toString() !== authenticatedUserId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only grade your own quiz answers"
+      });
+    }
+
+    // Check if already graded
+    if (quizResult.gradingStatus === 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: "This quiz has already been graded"
+      });
+    }
+
+    // Update status to grading
+    quizResult.gradingStatus = 'grading';
+    await quizResult.save();
+
+    console.log(`🤖 Grading ${essayAnswers.length} essay answers for quiz result ${quizResultId}...`);
+
+    // Grade each essay answer
+    const gradedAnswers = [];
+    let totalEssayScore = 0;
+    let maxEssayScore = 0;
+
+    for (const essayAnswer of essayAnswers) {
+      try {
+        console.log(`📝 Grading question ${essayAnswer.questionIndex + 1}...`);
+
+        const gradingResult = await gradeEssayAnswer({
+          questionContent: essayAnswer.questionContent,
+          studentAnswer: essayAnswer.studentAnswer,
+          essayGuideline: essayAnswer.essayGuideline,
+          maxScore: essayAnswer.maxScore || 10
+        });
+
+        const gradedAnswer = {
+          questionIndex: essayAnswer.questionIndex,
+          questionContent: essayAnswer.questionContent,
+          studentAnswer: essayAnswer.studentAnswer,
+          aiScore: gradingResult.score,
+          aiFeedback: gradingResult.feedback,
+          aiStrengths: gradingResult.strengths,
+          aiImprovements: gradingResult.improvements,
+          percentage: gradingResult.percentage,
+          maxScore: essayAnswer.maxScore || 10,
+          gradedAt: new Date(),
+          gradingModel: process.env.QUIZAI_MODEL || 'gemini-2.5-flash'
+        };
+
+        gradedAnswers.push(gradedAnswer);
+        totalEssayScore += gradingResult.score;
+        maxEssayScore += essayAnswer.maxScore || 10;
+
+        console.log(`✅ Question ${essayAnswer.questionIndex + 1}: ${gradingResult.score}/${essayAnswer.maxScore || 10} points`);
+
+      } catch (error) {
+        console.error(`❌ Failed to grade question ${essayAnswer.questionIndex + 1}:`, error.message);
+        
+        // Add failed grading with 0 score
+        gradedAnswers.push({
+          questionIndex: essayAnswer.questionIndex,
+          questionContent: essayAnswer.questionContent,
+          studentAnswer: essayAnswer.studentAnswer,
+          aiScore: 0,
+          aiFeedback: "Không thể chấm điểm câu hỏi này. Vui lòng thử lại sau.",
+          maxScore: essayAnswer.maxScore || 10,
+          gradedAt: new Date(),
+          gradingModel: process.env.QUIZAI_MODEL || 'gemini-2.5-flash',
+          error: error.message
+        });
+        
+        maxEssayScore += essayAnswer.maxScore || 10;
+      }
+    }
+
+    // Calculate total score (existing multiple choice + essay scores)
+    const existingScore = quizResult.score || 0;
+    const totalScore = existingScore + totalEssayScore;
+    const maxTotalScore = (quizResult.maxTotalScore || 0) + maxEssayScore;
+
+    // Update quiz result with graded essays
+    quizResult.essayAnswers = gradedAnswers;
+    quizResult.totalScore = totalScore;
+    quizResult.maxTotalScore = maxTotalScore;
+    quizResult.gradingStatus = 'completed';
+    await quizResult.save();
+
+    console.log(`✅ Completed grading. Total score: ${totalScore}/${maxTotalScore}`);
+
+    res.status(200).json({
+      success: true,
+      message: "Essay answers graded successfully",
+      data: {
+        quizResultId: quizResult._id,
+        gradedAnswers: gradedAnswers,
+        essayScore: totalEssayScore,
+        maxEssayScore: maxEssayScore,
+        totalScore: totalScore,
+        maxTotalScore: maxTotalScore,
+        percentage: Math.round((totalScore / maxTotalScore) * 100),
+        gradingStatus: 'completed',
+        gradedAt: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error("🚨 AI gradeEssayAnswers error:", error);
+    console.error("🚨 Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+
+    // Update status to failed if we have quizResultId
+    if (req.body.quizResultId) {
+      try {
+        await StudentQuizResult.findByIdAndUpdate(
+          req.body.quizResultId,
+          { gradingStatus: 'failed' }
+        );
+      } catch (updateError) {
+        console.error("Failed to update grading status:", updateError);
+      }
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to grade essay answers",
+      error: error.message
+    });
+  }
+};
