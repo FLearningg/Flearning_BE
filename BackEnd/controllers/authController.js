@@ -128,21 +128,20 @@ exports.verifyEmail = async (req, res) => {
       await instructorProfile.save();
       console.log("Updated instructor profile status to pending for user:", user.email);
       
-      // Kích hoạt AI review sau khi email được xác minh
-      console.log("🤖 Triggering AI review for instructor profile:", instructorProfile._id);
-      try {
-        // Chạy AI review bất đồng bộ để không block response
-        setTimeout(async () => {
-          try {
-            const aiReviewResult = await reviewInstructorProfile(instructorProfile._id);
-            console.log("AI Review Result:", aiReviewResult);
-          } catch (error) {
-            console.error("Error in AI Review:", error);
-          }
-        }, 1000); // Delay 1 giây để đảm bảo profile đã được lưu
-      } catch (error) {
-        console.error("Error triggering AI review:", error);
-      }
+      // Kích hoạt AI review ngay sau khi verify email
+      console.log("🤖 Scheduling AI review immediately for instructor profile:", instructorProfile._id);
+      
+      // Chỉ delay 1 giây để đảm bảo database đã commit
+      setTimeout(() => {
+        console.log("🚀 Starting AI review for:", instructorProfile._id);
+        reviewInstructorProfile(instructorProfile._id)
+          .then((aiReviewResult) => {
+            console.log("✅ AI Review completed successfully:", aiReviewResult);
+          })
+          .catch((error) => {
+            console.error("❌ Error in AI Review:", error);
+          });
+      }, 1000); // Only 1 second delay
     } else {
       console.log("No instructor profile found with status 'emailNotVerified' for user:", user.email);
     }
@@ -627,6 +626,25 @@ exports.registerInstructor = async (req, res) => {
         applicationStatus,
       });
       console.log("Created new profile with ID:", profile._id, "and status:", profile.applicationStatus);
+    }
+    
+    // Trigger AI review if user email is already verified (status = "pending")
+    if (applicationStatus === "pending") {
+      console.log("🤖 User email already verified, triggering AI review immediately for:", profile._id);
+      
+      // Chạy ngay lập tức, chỉ đợi 1 giây để đảm bảo DB commit
+      setTimeout(() => {
+        console.log("🚀 Starting AI review for:", profile._id);
+        reviewInstructorProfile(profile._id)
+          .then((aiReviewResult) => {
+            console.log("✅ AI Review completed successfully:", aiReviewResult);
+          })
+          .catch((error) => {
+            console.error("❌ Error in AI Review:", error);
+          });
+      }, 1000); // 1 second only
+    } else {
+      console.log("ℹ️ User email not verified yet, AI review will trigger after email verification");
     }
 
     // Delete old verification tokens for this user

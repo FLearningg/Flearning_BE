@@ -382,6 +382,10 @@ exports.userBannedEmail = (firstName) => {
     </div>
     ${emailFooter()}
   `;
+
+  return emailWrapper(content);
+};
+
 exports.userCompletedCourseEmail = (
   userName,
   courseName,

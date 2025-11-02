@@ -35,6 +35,7 @@ const quizRoutes = require("./routes/quizRoutes");
 const aiRoutes = require("./routes/aiRoutes");
 const recommendationRoutes = require("./routes/recommendationRoutes");
 const surveyRoutes = require("./routes/surveyRoutes");
+const { startAutoReviewService } = require("./services/autoAIReviewService");
 
 const app = express();
 
@@ -223,6 +224,10 @@ mongoose
   })
   .then(() => {
     console.log("✅ [SERVER] Connected to MongoDB successfully");
+    
+    // Khởi động auto AI review service
+    startAutoReviewService(30); // Check mỗi 30 phút
+    
     const PORT = process.env.PORT || 5000;
     // Use server.listen instead of app.listen for Socket.IO
     server.listen(PORT, () => {

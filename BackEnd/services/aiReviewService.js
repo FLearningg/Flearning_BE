@@ -4,11 +4,44 @@ const RejectedInstructor = require('../models/rejectedInstructorModel');
 const User = require('../models/userModel');
 const emailTemplates = require('../utils/emailTemplates');
 const sendEmail = require('../utils/sendEmail');
+const mongoose = require('mongoose');
+const fs = require('fs').promises;
+const path = require('path');
+const auditLogger = require('./auditLogger');
 
 /**
  * Service để đánh giá tự động hồ sơ giảng viên bằng AI
  * Sử dụng CV parsing service để phân tích tài liệu và đưa ra quyết định
  */
+
+/**
+ * Backup dữ liệu trước khi xóa để có thể khôi phục
+ */
+async function backupProfileData(profile) {
+  try {
+    const backupDir = path.join(__dirname, '../backups/rejected-profiles');
+    await fs.mkdir(backupDir, { recursive: true });
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `profile-${profile._id}-${timestamp}.json`;
+    const filepath = path.join(backupDir, filename);
+    
+    const backupData = {
+      profile: profile.toObject(),
+      timestamp: new Date(),
+      reason: 'AI rejection backup'
+    };
+    
+    await fs.writeFile(filepath, JSON.stringify(backupData, null, 2));
+    console.log(`💾 Backup created: ${filepath}`);
+    
+    return filepath;
+  } catch (error) {
+    console.error('⚠️ Failed to create backup:', error);
+    // Không throw error, chỉ log warning vì backup là optional
+    return null;
+  }
+}
 
 /**
  * Ngưỡng điểm để approve/reject
@@ -100,14 +133,26 @@ const reviewInstructorProfile = async (profileId) => {
       // Gửi email approve
       await sendApprovalEmail(profile.userId);
       
+      // Log approval
+      await auditLogger.logProfileApproval(
+        profileId,
+        profile.userId?._id || profile.userId,
+        finalScore
+      );
+      
       console.log(`✅ AI Approved profile: ${profileId} with score: ${finalScore}`);
     } else if (decision.status === 'rejected') {
       profile.applicationStatus = 'rejected';
       profile.rejectedAt = new Date();
       profile.rejectionReason = decision.reason;
       
+      // Tạo backup trước khi xóa
+      await backupProfileData(profile);
+      
       // Chuyển hồ sơ sang collection rejected instructors
+      // NOTE: Không dùng transaction vì MongoDB standalone không support
       try {
+        // Bước 1: Tạo bản sao trong RejectedInstructor collection
         const rejectedInstructor = await RejectedInstructor.createFromInstructorProfile(
           profile,
           'ai_rejected',
@@ -115,18 +160,67 @@ const reviewInstructorProfile = async (profileId) => {
         );
         console.log(`📋 Moved rejected profile to RejectedInstructors collection: ${rejectedInstructor._id}`);
         
-        // Xóa hồ sơ khỏi collection instructor profiles
+        // Log profile move
+        await auditLogger.logProfileMove(
+          profileId, 
+          'InstructorProfile', 
+          'RejectedInstructor', 
+          rejectedInstructor._id
+        );
+        
+        // Bước 2: Verify rằng document đã được tạo thành công
+        const verifyRejected = await RejectedInstructor.findById(rejectedInstructor._id);
+        if (!verifyRejected) {
+          throw new Error('Failed to verify rejected instructor document creation');
+        }
+        
+        // Bước 3: Xóa hồ sơ khỏi collection instructor profiles
         await InstructorProfile.findByIdAndDelete(profileId);
         console.log(`🗑️ Deleted rejected profile from InstructorProfiles: ${profileId}`);
+        
+        // Log profile deletion
+        await auditLogger.logProfileDelete(
+          profileId, 
+          'InstructorProfile', 
+          `AI rejection - moved to RejectedInstructor ${rejectedInstructor._id}`
+        );
+        
+        console.log(`✅ Successfully moved profile: ${profileId}`);
         
         // Gửi email reject
         await sendRejectionEmail(profile.userId, decision.reason);
         
+        // Log rejection
+        await auditLogger.logProfileRejection(
+          profileId,
+          profile.userId?._id || profile.userId,
+          finalScore,
+          decision.reason
+        );
+        
         console.log(`❌ AI Rejected profile: ${profileId} with score: ${finalScore}`);
       } catch (error) {
-        console.error('Error moving profile to rejected collection:', error);
-        // Nếu có lỗi khi chuyển, vẫn giữ lại hồ sơ trong collection cũ
+        console.error('❌ Error moving profile to rejected collection:', error);
+        console.error('Stack trace:', error.stack);
+        
+        // Log error to audit log
+        await auditLogger.logError('PROFILE_REJECTION_FAILED', error, {
+          profileId,
+          userId: profile.userId,
+          rejectionReason: decision.reason,
+          score: finalScore
+        });
+        
+        // Nếu có lỗi khi chuyển, vẫn giữ lại hồ sơ trong collection cũ với status rejected
         await profile.save();
+        
+        // Log chi tiết để debug
+        console.error('Profile ID:', profileId);
+        console.error('User ID:', profile.userId);
+        console.error('Rejection reason:', decision.reason);
+        
+        // Không cần rollback vì không dùng transaction nữa
+        // Profile sẽ vẫn ở status rejected trong InstructorProfile collection
       }
     } else {
       // Cần review thủ công
@@ -270,6 +364,18 @@ const makeDecision = (score, cvAnalysis, additionalAnalysis) => {
     recommendations: []
   };
 
+  // Xử lý trường hợp đặc biệt: Không có documents
+  if (cvAnalysis.hasNoDocuments) {
+    decision.status = 'rejected';
+    decision.reason = 'Không có tài liệu CV/Resume được cung cấp. Hồ sơ bị từ chối tự động.';
+    decision.recommendations = cvAnalysis.recommendations || [
+      'Cần upload CV/Resume để được đánh giá',
+      'Tài liệu cần thể hiện rõ kinh nghiệm và kỹ năng',
+      'Có thể nộp lại hồ sơ sau khi đã chuẩn bị đầy đủ tài liệu'
+    ];
+    return decision;
+  }
+
   if (score >= AI_REVIEW_THRESHOLDS.APPROVE_MIN_SCORE) {
     decision.status = 'approved';
     decision.reason = 'Hồ sơ đáp ứng đủ điều kiện để trở thành giảng viên';
@@ -299,7 +405,7 @@ const makeDecision = (score, cvAnalysis, additionalAnalysis) => {
       reasons.push('Tài liệu không đủ chất lượng hoặc không thể đọc được');
     }
     
-    decision.reason = reasons.join('; ');
+    decision.reason = reasons.length > 0 ? reasons.join('; ') : 'Điểm số không đạt yêu cầu tối thiểu';
   } else {
     // Cần review thủ công
     decision.status = 'manual_review';
