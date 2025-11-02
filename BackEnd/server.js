@@ -33,6 +33,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const watchCourseRoute = require("./routes/WatchCourseRoute");
 const quizRoutes = require("./routes/quizRoutes");
 const aiRoutes = require("./routes/aiRoutes");
+const recommendationRoutes = require("./routes/recommendationRoutes");
 
 const app = express();
 
@@ -202,6 +203,8 @@ app.use("/api/watch-course", watchCourseRoute);
 // Quiz routes
 app.use("/api/quiz", quizRoutes);
 app.use("/api/ai", aiRoutes);
+// Learning Path routes
+app.use("/api/recommendations", recommendationRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 

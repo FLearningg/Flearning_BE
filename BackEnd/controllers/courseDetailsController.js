@@ -8,7 +8,9 @@ const Enrollment = require("../models/enrollmentModel");
 const mongoose = require("mongoose");
 
 // Use mongoose.models to avoid OverwriteModelError
-const InstructorProfile = mongoose.models.InstructorProfile || require("../models/instructorProfileModel");
+const InstructorProfile =
+  mongoose.models.InstructorProfile ||
+  require("../models/instructorProfileModel");
 
 /**
  * @desc    Get details for a specific course
@@ -22,10 +24,10 @@ exports.getCourseDetails = async (req, res) => {
         path: "sections",
         populate: {
           path: "lessons",
-          model: "Lesson", // tên model chính xác
-          options: { sort: { order: 1 } }, // nếu muốn lessons sắp theo thứ tự
+          model: "Lesson",
+          options: { sort: { order: 1 } },
         },
-        options: { sort: { order: 1 } }, // nếu muốn sections sắp theo thứ tự
+        options: { sort: { order: 1 } },
       })
       .populate("categoryIds")
       .populate("discountId")
@@ -35,22 +37,29 @@ exports.getCourseDetails = async (req, res) => {
       return res.status(404).json({ message: "Course not found" });
     }
 
-    // Manually fetch instructor profile if course creator is an instructor
+    const totalStudentsEnrolled = await Enrollment.countDocuments({
+      courseId: course._id,
+      status: "enrolled",
+    });
+
+    let courseObject = course.toObject();
+    courseObject.totalStudentsEnrolled = totalStudentsEnrolled;
+
     if (course.createdBy) {
       const instructorProfile = await InstructorProfile.findOne({
         userId: course.createdBy._id,
-      }).select("headline bio totalStudents totalCourses averageRating totalReviews");
+      }).select(
+        "headline bio totalStudents totalCourses averageRating totalReviews"
+      );
 
-      // Attach instructor profile to user object
       if (instructorProfile) {
-        course.createdBy = {
+        courseObject.createdBy = {
           ...course.createdBy.toObject(),
           instructorProfile: instructorProfile,
         };
       }
     }
-
-    res.json(course);
+    res.json(courseObject);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

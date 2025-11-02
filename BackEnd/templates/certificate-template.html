@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mẫu Chứng Chỉ</title>
+    <style>
+      /* --- Import Fonts --- */
+      @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Momo+Signature&family=Merriweather:ital,wght@0,400;1,300&display=swap");
+
+      /*
+              - 'Montserrat': Văn bản chính, tiêu đề
+              - 'Momo Signature': Tên học viên
+              - 'Merriweather': Văn bản phụ
+            */
+
+      body {
+        font-family: "Montserrat", sans-serif;
+        background-color: #f4f4f4;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      @page {
+        size: A4 landscape;
+        margin: 0;
+      }
+
+      .certificate-container {
+        background-image: url("https://firebasestorage.googleapis.com/v0/b/flearning-7f88f.firebasestorage.app/o/temporary%2Fcertificates%2Fcertificate_blank_2_1761989084289.png?alt=media");
+        background-size: cover;
+        width: 1123px;
+        height: 794px;
+        background-color: #ffffff;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+        text-align: center;
+        padding: 60px 80px;
+        box-sizing: border-box;
+      }
+
+      /* --- Các Hình Trang Trí Ở Góc --- */
+      .bg-shape-top-left {
+        position: absolute;
+        top: -50px;
+        left: -50px;
+        width: 300px;
+        height: 300px;
+        background: #8c1a2a; /* Màu đỏ đô */
+        transform: rotate(45deg);
+        z-index: 1;
+      }
+
+      .bg-shape-top-left-inner {
+        position: absolute;
+        top: -30px;
+        left: 20px;
+        width: 250px;
+        height: 250px;
+        background: #d4a017; /* Màu vàng đồng */
+        transform: rotate(45deg);
+        z-index: 2;
+      }
+
+      .bg-shape-bottom-right {
+        position: absolute;
+        bottom: -50px;
+        right: -50px;
+        width: 300px;
+        height: 300px;
+        background: #8c1a2a;
+        transform: rotate(45deg);
+        z-index: 1;
+      }
+
+      .bg-shape-bottom-right-inner {
+        position: absolute;
+        bottom: -30px;
+        right: 20px;
+        width: 250px;
+        height: 250px;
+        background: #d4a017;
+        transform: rotate(45deg);
+        z-index: 2;
+      }
+
+      /* --- Con Dấu --- */
+      .seal {
+        position: absolute;
+        top: 60px;
+        right: 80px;
+        width: 120px;
+        height: 120px;
+        z-index: 3;
+      }
+
+      /* --- Nội Dung Văn Bản --- */
+      .content-wrapper {
+        position: relative;
+        z-index: 3;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+      }
+
+      .student-name {
+        font-family: "Momo Signature", cursive;
+        font-size: 32px;
+        margin: 0;
+        margin-top: 180px;
+        color: #000;
+        font-weight: 600;
+      }
+
+      .reason {
+        font-family: "Merriweather", serif;
+        font-style: italic;
+        font-size: 16px;
+        color: #555;
+        margin: 0;
+        margin-bottom: 30px; /* SỬA: Khoảng cách với tên khóa học */
+      }
+
+      .course-name {
+        font-family: "Montserrat", sans-serif;
+        font-size: 32px;
+        font-weight: 700;
+        color: #000;
+        letter-spacing: 1px;
+        margin: 0;
+        margin-top: 100px;
+      }
+
+      .signature-section {
+        margin-top: auto; /* Đẩy xuống dưới cùng */
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        padding-bottom: 20px;
+      }
+
+      .signature-block {
+        width: 300px; /* SỬA: Rộng hơn cho chữ ký */
+        text-align: center;
+      }
+
+      .signature-line {
+        border-bottom: 1px solid #999; /* SỬA: Mảnh hơn cho tinh tế */
+        padding-top: 40px;
+      }
+
+      .signature-title {
+        font-family: "Montserrat", sans-serif;
+        font-size: 14px; /* SỬA: Nhỏ hơn */
+        font-weight: 400; /* SỬA: Mảnh hơn */
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #333;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="certificate-container">
+      <div class="content-wrapper">
+        <h1 class="main-header"></h1>
+        <h2 class="sub-header"></h2>
+
+        <p class="presented-to"></p>
+
+        <div class="student-name">{{STUDENT_NAME}}</div>
+
+        <div class="course-name">{{COURSE_TITLE}}</div>
+
+        <div class="signature-section">
+          <div class="signature-block">
+            <div class="signature-line"></div>
+            <div class="signature-title">{{SIGNATORY_NAME}}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
