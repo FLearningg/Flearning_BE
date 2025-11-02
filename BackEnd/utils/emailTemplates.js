@@ -413,3 +413,4 @@ ${emailFooter()}
 
   return emailWrapper(content);
 };
+}
