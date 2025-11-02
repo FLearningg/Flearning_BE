@@ -417,3 +417,4 @@ ${emailFooter()}
 
   return emailWrapper(content);
 };
+}

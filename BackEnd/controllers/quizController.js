@@ -1730,7 +1730,7 @@ exports.submitQuiz = async (req, res) => {
   
   try {
     const { quizId } = req.params;
-    const { answers } = req.body; // Array of { questionIndex: number, selectedAnswers: [indices] }
+    const { answers, essayAnswers } = req.body; // answers: multiple choice, essayAnswers: essay questions
     const userId = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(quizId)) {
@@ -1777,6 +1777,10 @@ exports.submitQuiz = async (req, res) => {
     let totalQuestions = answers.length;
     let correctAnswers = 0;
     let questionResults = [];
+    
+    // Track essay questions separately
+    const hasEssayQuestions = essayAnswers && Array.isArray(essayAnswers) && essayAnswers.length > 0;
+    let essayQuestionsList = [];
 
     for (let i = 0; i < answers.length; i++) {
       const userAnswer = answers[i];
@@ -1793,6 +1797,10 @@ exports.submitQuiz = async (req, res) => {
       // Get the original question from the full quiz using originalIndex from frontend
       const question = quiz.questions[originalIndex];
       
+      // Skip essay questions in this loop (they'll be processed separately)
+      if (question.type === 'essay') {
+        continue;
+      }
 
       // Check if question has answers array
       if (!question.answers || !Array.isArray(question.answers)) {
@@ -1836,9 +1844,37 @@ exports.submitQuiz = async (req, res) => {
       });
     }
     
-    // Calculate percentage score
-    const scorePercentage = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
-    const passed = scorePercentage >= 80;
+    // Process essay questions
+    if (hasEssayQuestions) {
+      for (const essayAnswer of essayAnswers) {
+        const questionIndex = essayAnswer.questionIndex;
+        const originalIndex = essayAnswer.originalIndex;
+        const studentAnswer = essayAnswer.answer || '';
+        
+        if (originalIndex >= 0 && originalIndex < quiz.questions.length) {
+          const question = quiz.questions[originalIndex];
+          
+          if (question.type === 'essay') {
+            essayQuestionsList.push({
+              questionIndex: questionIndex,
+              originalIndex: originalIndex,
+              questionContent: question.content,
+              studentAnswer: studentAnswer,
+              essayGuideline: question.essayGuideline || 'Evaluate based on content accuracy, understanding, completeness, and clarity.',
+              maxScore: question.score || 10
+            });
+            
+            // Add to total questions count
+            totalQuestions++;
+          }
+        }
+      }
+    }
+    
+    // Calculate percentage score (only for multiple choice at this point)
+    const mcQuestions = totalQuestions - essayQuestionsList.length;
+    const scorePercentage = mcQuestions > 0 ? Math.round((correctAnswers / mcQuestions) * 100) : 0;
+    const passed = scorePercentage >= 80; // Will be recalculated after essay grading
     
     if (existingResult) {
       // Update existing result
@@ -1855,12 +1891,28 @@ exports.submitQuiz = async (req, res) => {
         totalQuestionsInPool: quiz.questions.length,
         selectedQuestionsCount: totalQuestions
       };
+      
+      // Set essay answers and grading status
+      if (hasEssayQuestions) {
+        existingResult.essayAnswers = essayQuestionsList.map(eq => ({
+          questionIndex: eq.questionIndex,
+          questionContent: eq.questionContent,
+          studentAnswer: eq.studentAnswer,
+          maxScore: eq.maxScore
+        }));
+        existingResult.gradingStatus = 'pending'; // Will be graded by AI separately
+        existingResult.maxTotalScore = mcQuestions * 10 + essayQuestionsList.reduce((sum, eq) => sum + eq.maxScore, 0);
+      }
 
       await existingResult.save();
 
+      const responseMessage = hasEssayQuestions 
+        ? `Quiz submitted successfully. Multiple choice score: ${scorePercentage}%. Essay questions will be graded by AI.`
+        : `Quiz retaken successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`;
+
       return res.status(200).json({
         success: true,
-        message: `Quiz retaken successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`,
+        message: responseMessage,
         data: {
           resultId: existingResult._id,
           quizId: quizId,
@@ -1870,7 +1922,10 @@ exports.submitQuiz = async (req, res) => {
           passed: passed,
           passingScore: 80,
           takenAt: existingResult.takenAt,
-          questionResults: questionResults
+          questionResults: questionResults,
+          hasEssayQuestions: hasEssayQuestions,
+          essayQuestionsCount: essayQuestionsList.length,
+          gradingStatus: hasEssayQuestions ? 'pending' : 'completed'
         }
       });
     } else {
@@ -1892,12 +1947,30 @@ exports.submitQuiz = async (req, res) => {
           selectedQuestionsCount: totalQuestions
         }
       });
+      
+      // Set essay answers and grading status
+      if (hasEssayQuestions) {
+        quizResult.essayAnswers = essayQuestionsList.map(eq => ({
+          questionIndex: eq.questionIndex,
+          questionContent: eq.questionContent,
+          studentAnswer: eq.studentAnswer,
+          maxScore: eq.maxScore
+        }));
+        quizResult.gradingStatus = 'pending'; // Will be graded by AI separately
+        quizResult.maxTotalScore = mcQuestions * 10 + essayQuestionsList.reduce((sum, eq) => sum + eq.maxScore, 0);
+      } else {
+        quizResult.gradingStatus = 'completed';
+      }
 
       const savedResult = await quizResult.save();
 
+      const responseMessage = hasEssayQuestions 
+        ? `Quiz submitted successfully. Multiple choice score: ${scorePercentage}%. Essay questions will be graded by AI.`
+        : `Quiz submitted successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`;
+
       res.status(201).json({
         success: true,
-        message: `Quiz submitted successfully. Score: ${scorePercentage}% ${passed ? '(PASSED)' : '(FAILED - Need 80% to pass)'}`,
+        message: responseMessage,
         data: {
           resultId: savedResult._id,
           quizId: quizId,
@@ -1907,7 +1980,10 @@ exports.submitQuiz = async (req, res) => {
           passed: passed,
           passingScore: 80,
           takenAt: savedResult.takenAt,
-          questionResults: questionResults
+          questionResults: questionResults,
+          hasEssayQuestions: hasEssayQuestions,
+          essayQuestionsCount: essayQuestionsList.length,
+          gradingStatus: savedResult.gradingStatus
         }
       });
     }

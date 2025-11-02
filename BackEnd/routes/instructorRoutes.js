@@ -4,9 +4,11 @@ const {
   getDashboardStats,
   getAllCategories,
   createCourse,
+  saveToDraft,
   updateCourse,
   getCourses,
   getCourseById,
+  getCourseAnalytics,
   createSection,
   updateSection,
   deleteSection,
@@ -50,9 +52,11 @@ router.get("/profile", getMyProfile);
 router.put("/profile", upload.single("avatar"), updateMyProfile);
 
 // Course management routes
+router.post("/courses/draft", saveToDraft); // Must be before /courses to avoid route conflict
 router.post("/courses", createCourse);
 router.get("/courses", getCourses);
 router.get("/courses/:courseId", getCourseById);
+router.get("/courses/:courseId/analytics", getCourseAnalytics);
 router.put("/courses/:courseId", updateCourse);
 
 // Section management routes
