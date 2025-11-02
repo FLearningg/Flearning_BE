@@ -19,7 +19,15 @@ const Section = require("../models/sectionModel");
 
 // Khởi tạo Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash-exp",
+    generationConfig: {
+        temperature: 0.7,
+        topP: 0.95,
+        topK: 40,
+        maxOutputTokens: 8192,
+    }
+});
 
 // --- CẬP NHẬT SONG NGỮ ---
 // Mô tả Schema cho Gemini hiểu (Mô tả song ngữ)
@@ -117,32 +125,52 @@ You have access to a MongoDB database with the following collections and schemas
     -   order (Number): Display order / Thứ tự hiển thị.
 `;
 
-// --- CẬP NHẬT SONG NGỮ ---
+// Improved Smart AI Prompt
 const systemPrompt = `
-You are a helpful and friendly bilingual chatbot for an e-learning platform called F-Learning.
-**Your most important rule is to detect the language of the user's question (Vietnamese or English) and respond in that SAME language.**
+You are F-Learning Assistant - an intelligent, helpful, and friendly bilingual AI chatbot for the F-Learning e-learning platform.
 
-Analyze the user's question.
-- If it's a general knowledge question (e.g., "What is JavaScript?" or "ReactJS là gì?"), answer it directly in the original language. 
-  **IMPORTANT**: After answering general questions, ALWAYS suggest related courses from F-Learning by adding:
-  "Bạn có thể học thêm về chủ đề này tại F-Learning!" (Vietnamese) or "You can learn more about this topic on F-Learning!" (English).
-  Then add a database query to find related courses.
-- If the question requires data from the F-Learning database, you MUST respond ONLY with a JSON object in the following format:
-  {
-    "collection": "collection_name_to_query",
-    "query": { "mongodb_find_query_object" },
-    "options": { "mongodb_find_options_like_sort_limit" }
-  }
+## Core Rules:
+1. **Language Detection**: ALWAYS detect and respond in the SAME language as the user's question (Vietnamese or English).
+2. **Context Awareness**: Understand user intent, context, and provide relevant, conversational responses.
+3. **Proactive Suggestions**: After answering any question, suggest relevant F-Learning courses or features.
+4. **Natural Conversation**: Be friendly, supportive, and encouraging. Use emojis appropriately (📚 💡 🎯 ✨).
 
-- The "collection" must be one of the collections described in the schema.
-- The "query" should be a valid MongoDB 'find' query object. Use operators like $regex for searching text. For example, to find courses with 'React' in the title, use: { "title": { "$regex": "react", "$options": "i" } }.
-- The "options" can include 'limit', 'sort', 'select'. Default limit is 10.
-- Do NOT add any text or explanation before or after the JSON object.
+## Response Strategy:
 
-// --- THÊM MỚI: QUY TẮC LẤY KHÓA HỌC CỦA NGƯỜI DÙNG ---
-- **SPECIAL RULE:** If the user asks for **their own enrolled courses**, respond with this specific JSON:
-  { "collection": "users", "query": { "action": "get_enrolled_courses" } }
-// --- KẾT THÚC THÊM MỚI ---
+### For General Knowledge Questions:
+- Answer comprehensively and clearly in the user's language
+- Provide examples and explanations when helpful
+- Include practical tips and best practices
+- ALWAYS end with relevant F-Learning course suggestions
+- Be conversational and engaging
+
+### For Database Queries:
+When the user asks about F-Learning data (courses, instructors, progress, etc.), respond with ONLY this JSON format.
+DO NOT include any explanations, descriptions, or additional text. ONLY return the JSON object.
+
+{
+  "collection": "collection_name",
+  "query": { "mongodb_query" },
+  "options": { "limit": 50, "sort": {}, "select": "" }
+}
+
+**CRITICAL SEARCH RULES - MUST FOLLOW:**
+1. For course searches, ALWAYS use $regex with case-insensitive search on the "title" field
+2. Use broad search patterns with multiple keywords separated by | (OR operator)
+3. DO NOT return explanations - ONLY return the JSON object
+4. DO NOT use markdown code blocks - ONLY return raw JSON
+
+**Examples:**
+- "khóa học về React" → {"collection":"courses","query":{"title":{"$regex":"react","$options":"i"}}}
+- "course sức khỏe" → {"collection":"courses","query":{"title":{"$regex":"sức khỏe|yoga|health|fitness|thể dục|wellness","$options":"i"}}}
+- "find python courses" → {"collection":"courses","query":{"title":{"$regex":"python","$options":"i"}}}
+- "tìm khóa học lập trình" → {"collection":"courses","query":{"title":{"$regex":"lập trình|programming|code|dev","$options":"i"}}}
+
+### Special User Data Rules:
+- "my courses" / "khóa học của tôi" → { "collection": "users", "query": { "action": "get_enrolled_courses" } }
+- "my progress" / "tiến độ" → { "collection": "progress", "query": { "studentId": "USER_ID" } }
+- "my quiz results" / "kết quả quiz" → { "collection": "studentquizresults", "query": { "studentId": "USER_ID" } }
+- "my certificates" / "chứng chỉ" → { "collection": "certificates", "query": { "studentId": "USER_ID" } }
 
 Example Questions and expected responses:
 - User (Vietnamese): "Liệt kê 5 người dùng gần đây" -> { "collection": "users", "query": {}, "options": { "sort": { "createdAt": -1 }, "limit": 5, "select": "firstName lastName email createdAt" } }
@@ -170,15 +198,33 @@ exports.handleQuery = async (req, res) => {
         }
 
         const fullPromptForAnalysis = `${systemPrompt}\n\n${schemaDescription}\n\nUser Question: "${userPrompt}"`;
-        
+
         let analysisResult = await model.generateContent(fullPromptForAnalysis);
         let analysisText = analysisResult.response.text().trim();
 
+        // Log the AI response for debugging
+        console.log("AI Response:", analysisText);
+
         let queryJson;
         try {
-            const jsonString = analysisText.replace(/```json/g, '').replace(/```/g, '').trim();
+            // More robust JSON extraction
+            let jsonString = analysisText;
+
+            // Remove markdown code blocks
+            jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+
+            // Try to extract JSON object if there's text before/after it
+            const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                jsonString = jsonMatch[0];
+            }
+
+            jsonString = jsonString.trim();
             queryJson = JSON.parse(jsonString);
+
+            console.log("Parsed Query JSON:", JSON.stringify(queryJson, null, 2));
         } catch (e) {
+            console.log("Failed to parse as JSON, treating as general knowledge question");
             // Đây là câu trả lời kiến thức chung, không phải query database
             // Thêm gợi ý khóa học liên quan
             const isVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(userPrompt);
@@ -276,16 +322,38 @@ exports.handleQuery = async (req, res) => {
                 return res.status(400).json({ error: `Invalid collection: ${collection}` });
             }
 
-            const limit = options.limit || 10;
+            const limit = options.limit || 50;
             const sort = options.sort || {};
             const select = options.select || '';
 
             dbResults = await dbModel.find(query).limit(limit).sort(sort).select(select).lean();
+
+            // Fallback: If no results found and searching courses, try broader search
+            if ((!dbResults || dbResults.length === 0) && collection === 'courses' && query.title && query.title.$regex) {
+                console.log("No results found, trying broader search across multiple fields...");
+
+                // Try searching in subTitle, description and other fields too
+                const broadQuery = {
+                    $or: [
+                        { title: query.title },
+                        { subTitle: query.title },
+                        { 'detail.description': query.title }
+                    ]
+                };
+
+                dbResults = await dbModel.find(broadQuery).limit(limit).sort(sort).select(select).lean();
+                console.log("Broader search results:", dbResults.length);
+            }
         }
 
         // Phần code còn lại để tóm tắt và trả về kết quả giữ nguyên...
         if (!dbResults || dbResults.length === 0) {
-            return res.json({ reply: "I couldn't find any information for that question. / Tôi không thể tìm thấy thông tin nào cho câu hỏi này." });
+            const isVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(userPrompt);
+            return res.json({
+                reply: isVietnamese
+                    ? "Tôi không thể tìm thấy thông tin nào cho câu hỏi này. Bạn có thể thử hỏi theo cách khác hoặc xem tất cả khóa học tại F-Learning."
+                    : "I couldn't find any information for that question. You can try asking differently or browse all courses on F-Learning."
+            });
         }
         
         const clientUrl = process.env.CLIENT_URL;
@@ -306,7 +374,7 @@ exports.handleQuery = async (req, res) => {
 
         const summaryResult = await model.generateContent(promptForSummary);
         const finalReply = summaryResult.response.text();
-        
+
         return res.json({ reply: finalReply });
 
     } catch (error) {
