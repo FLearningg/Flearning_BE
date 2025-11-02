@@ -35,6 +35,7 @@ const quizRoutes = require("./routes/quizRoutes");
 const aiRoutes = require("./routes/aiRoutes");
 const recommendationRoutes = require("./routes/recommendationRoutes");
 const proctoringRoutes = require("./routes/proctoringRoutes");
+const surveyRoutes = require("./routes/surveyRoutes");
 
 const app = express();
 
@@ -208,6 +209,8 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/proctoring", proctoringRoutes);
 // Learning Path routes
 app.use("/api/recommendations", recommendationRoutes);
+// Survey routes
+app.use("/api/survey", surveyRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 

@@ -339,3 +339,35 @@ exports.userEnrolledInCourseEmail = (userName, courseName, welcomeMessage) => {
 
   return emailWrapper(content);
 };
+
+exports.userCompletedCourseEmail = (
+  userName,
+  courseName,
+  congratsMessage,
+  certificateUrl // <-- Tham số mới
+) => {
+  const content = `
+${emailHeader(`Congratulations on Completing ${courseName}!`)}
+<div style="padding: 40px 30px;">
+  <h2 style="color: #262626; margin-top: 0;">Congratulations, ${userName}!</h2>
+  <p style="color: #595959; font-size: 32px; line-height: 1.6;">
+    ${congratsMessage || "You've successfully completed the course."}
+  </p>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    We are thrilled to confirm that you have officially completed the course: <strong>"${courseName}"</strong>. 🎓
+  </p>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    This is a fantastic achievement, and we're proud of your dedication and hard work.
+  </p>
+  <div style="text-align: center; margin: 30px 0;">
+    ${button(certificateUrl, "View Your Certificate")}
+  </div>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    Keep up the great work! Why not check out another course to continue your learning journey?
+  </p>
+</div>
+${emailFooter()}
+`;
+
+  return emailWrapper(content);
+};

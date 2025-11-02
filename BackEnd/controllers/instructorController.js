@@ -7,6 +7,9 @@ const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
 const Quiz = require("../models/QuizModel");
 const InstructorProfile = require("../models/instructorProfileModel");
+const Enrollment = require("../models/enrollmentModel");
+const Payment = require("../models/paymentModel");
+const Feedback = require("../models/feedbackModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const fs = require("fs");
@@ -19,17 +22,48 @@ const {
  * @desc    Get dashboard statistics for instructor
  * @route   GET /api/instructor/dashboard
  * @access  Private (Instructor only)
+ * @query   year - Filter by year (optional, default: current year)
+ * @query   startDate - Start date for custom range (optional, ISO format)
+ * @query   endDate - End date for custom range (optional, ISO format)
+ * @query   period - Time period: 'week', 'month', 'quarter', 'year', 'all' (optional, default: 'year')
  */
 exports.getDashboardStats = async (req, res) => {
   try {
     const instructorId = req.user._id;
     const today = new Date();
+
+    // Parse query parameters
+    const { year, startDate, endDate, period = "year" } = req.query;
+
+    // Determine date range based on query parameters
+    let dateRangeStart, dateRangeEnd;
+
+    if (startDate && endDate) {
+      // Custom date range
+      dateRangeStart = new Date(startDate);
+      dateRangeEnd = new Date(endDate);
+    } else if (year) {
+      // Specific year
+      const targetYear = parseInt(year);
+      dateRangeStart = new Date(targetYear, 0, 1);
+      dateRangeEnd = new Date(targetYear, 11, 31, 23, 59, 59);
+    } else {
+      // Default to current year
+      dateRangeStart = new Date(today.getFullYear(), 0, 1);
+      dateRangeEnd = new Date(today.getFullYear(), 11, 31, 23, 59, 59);
+    }
+
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayOfWeek = new Date(today);
+    firstDayOfWeek.setDate(today.getDate() - today.getDay());
+
+    // Lấy thông tin instructor để lấy moneyLeft
+    const instructor = await User.findById(instructorId).select("moneyLeft");
 
     // Lấy danh sách các khóa học của instructor
     const instructorCourses = await Course.find({
       createdBy: instructorId,
-    }).select("_id");
+    }).select("_id title price");
 
     const courseIds = instructorCourses.map((course) => course._id);
 
@@ -37,73 +71,228 @@ exports.getDashboardStats = async (req, res) => {
       totalCourses,
       totalStudents,
       totalRevenueResult,
+      periodRevenueResult,
       monthlySales,
       newStudentsThisMonth,
+      newStudentsThisWeek,
       latestTransactions,
       courseRatingData,
+      topCoursesByRevenue,
+      topCoursesByStudents,
+      studentGrowthData,
+      revenueByCourse,
+      courseCompletionData,
+      enrollmentStatusDistribution,
+      categorySalesDistribution,
     ] = await Promise.all([
       // Tổng số khóa học của instructor
       Course.countDocuments({ createdBy: instructorId }),
 
-      // Tổng số học viên đã đăng ký các khóa học của instructor
-      User.aggregate([
+      // Tổng số học viên (tất cả thời gian)
+      Enrollment.aggregate([
         {
           $match: {
-            enrolledCourses: { $in: courseIds },
+            courseId: { $in: courseIds },
+            status: { $in: ["enrolled", "completed"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$userId",
+          },
+        },
+        {
+          $count: "total",
+        },
+      ]),
+
+      // Tổng doanh thu (tất cả thời gian)
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
           },
         },
         {
           $group: {
             _id: null,
-            total: { $sum: 1 },
+            total: { $sum: "$amount" },
           },
         },
       ]),
 
-      // Tổng doanh thu từ các khóa học của instructor
-      Transaction.aggregate([
+      // Doanh thu trong khoảng thời gian được chọn
+      Payment.aggregate([
         {
           $match: {
             status: "completed",
-            courseId: { $in: courseIds },
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
           },
         },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]),
-
-      // Doanh thu theo tháng trong năm hiện tại
-      Transaction.aggregate([
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
         {
           $match: {
-            status: "completed",
-            courseId: { $in: courseIds },
-            createdAt: { $gte: new Date(today.getFullYear(), 0, 1) },
+            "enrollments.courseId": { $in: courseIds },
           },
         },
         {
           $group: {
-            _id: { month: { $month: "$createdAt" } },
+            _id: null,
             total: { $sum: "$amount" },
+            count: { $sum: 1 },
           },
         },
-        { $sort: { "_id.month": 1 } },
+      ]),
+
+      // Doanh thu theo tháng trong khoảng thời gian
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            revenue: { $sum: "$amount" },
+            transactions: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
       ]),
 
       // Số học viên mới trong tháng này
-      User.countDocuments({
-        enrolledCourses: { $in: courseIds },
+      Enrollment.countDocuments({
+        courseId: { $in: courseIds },
+        status: { $in: ["enrolled", "completed"] },
         createdAt: { $gte: firstDayOfMonth },
       }),
 
-      // 5 giao dịch gần nhất
-      Transaction.find({
-        status: "completed",
+      // Số học viên mới trong tuần này
+      Enrollment.countDocuments({
         courseId: { $in: courseIds },
-      })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .populate("userId", "firstName lastName email")
-        .populate("courseId", "title"),
+        status: { $in: ["enrolled", "completed"] },
+        createdAt: { $gte: firstDayOfWeek },
+      }),
+
+      // 10 giao dịch gần nhất (tăng từ 5 lên 10)
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
+          },
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "enrollments.userId",
+            foreignField: "_id",
+            as: "user",
+          },
+        },
+        {
+          $unwind: "$user",
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "enrollments.courseId",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $sort: { createdAt: -1 },
+        },
+        {
+          $limit: 10,
+        },
+        {
+          $project: {
+            _id: 1,
+            amount: 1,
+            paymentDate: 1,
+            paymentMethod: 1,
+            status: 1,
+            createdAt: 1,
+            userId: {
+              _id: "$user._id",
+              firstName: "$user.firstName",
+              lastName: "$user.lastName",
+              email: "$user.email",
+            },
+            courseId: {
+              _id: "$course._id",
+              title: "$course.title",
+            },
+          },
+        },
+      ]),
 
       // Đánh giá khóa học
       Course.aggregate([
@@ -130,6 +319,323 @@ exports.getDashboardStats = async (req, res) => {
             ],
           },
         },
+      ]),
+
+      // Top 5 khóa học theo doanh thu
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$enrollments.courseId",
+            revenue: { $sum: "$amount" },
+            enrollments: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $project: {
+            _id: 1,
+            title: "$course.title",
+            thumbnail: "$course.thumbnail",
+            price: "$course.price",
+            rating: "$course.rating",
+            revenue: 1,
+            enrollments: 1,
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // Top 5 khóa học theo số học viên
+      Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+            status: { $in: ["enrolled", "completed"] },
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
+          },
+        },
+        {
+          $group: {
+            _id: "$courseId",
+            totalStudents: { $sum: 1 },
+            uniqueStudents: { $addToSet: "$userId" },
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            totalEnrollments: "$totalStudents",
+            uniqueStudents: { $size: "$uniqueStudents" },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $project: {
+            _id: 1,
+            title: "$course.title",
+            thumbnail: "$course.thumbnail",
+            rating: "$course.rating",
+            totalEnrollments: 1,
+            uniqueStudents: 1,
+          },
+        },
+        { $sort: { uniqueStudents: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // Student growth theo tuần trong khoảng thời gian
+      Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+            status: { $in: ["enrolled", "completed"] },
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              week: { $week: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.week": 1 } },
+      ]),
+
+      // Doanh thu theo từng khóa học
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$enrollments.courseId",
+            totalRevenue: { $sum: "$amount" },
+            totalTransactions: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $project: {
+            _id: 1,
+            title: "$course.title",
+            price: "$course.price",
+            totalRevenue: 1,
+            totalTransactions: 1,
+          },
+        },
+        { $sort: { totalRevenue: -1 } },
+      ]),
+
+      // Tỷ lệ hoàn thành khóa học
+      Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              courseId: "$courseId",
+              status: "$status",
+            },
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $group: {
+            _id: "$_id.courseId",
+            statuses: {
+              $push: {
+                status: "$_id.status",
+                count: "$count",
+              },
+            },
+            totalEnrollments: { $sum: "$count" },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $project: {
+            _id: 1,
+            title: "$course.title",
+            statuses: 1,
+            totalEnrollments: 1,
+          },
+        },
+      ]),
+
+      // Phân bố trạng thái enrollment (cho pie chart)
+      Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            status: "$_id",
+            count: 1,
+            _id: 0,
+          },
+        },
+      ]),
+
+      // Phân bố doanh thu theo category (cho pie chart)
+      Payment.aggregate([
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: dateRangeStart, $lte: dateRangeEnd },
+          },
+        },
+        {
+          $lookup: {
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
+        },
+        {
+          $unwind: "$enrollments",
+        },
+        {
+          $match: {
+            "enrollments.courseId": { $in: courseIds },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "enrollments.courseId",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        {
+          $unwind: "$course",
+        },
+        {
+          $unwind: "$course.categoryIds",
+        },
+        {
+          $group: {
+            _id: "$course.categoryIds",
+            revenue: { $sum: "$amount" },
+            enrollments: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "_id",
+            foreignField: "_id",
+            as: "category",
+          },
+        },
+        {
+          $unwind: "$category",
+        },
+        {
+          $project: {
+            categoryId: "$_id",
+            categoryName: "$category.name",
+            revenue: 1,
+            enrollments: 1,
+          },
+        },
+        { $sort: { revenue: -1 } },
       ]),
     ]);
 
@@ -159,28 +665,145 @@ exports.getDashboardStats = async (req, res) => {
       });
     }
 
-    // Xử lý doanh thu theo tháng
-    const formattedMonthlySales = Array.from({ length: 12 }, (_, i) => {
-      const monthData = monthlySales.find((m) => m._id.month === i + 1);
+    // Xử lý doanh thu theo tháng - format theo year và month
+    const formattedMonthlySales = monthlySales.map((item) => ({
+      year: item._id.year,
+      month: item._id.month,
+      revenue: parseFloat(item.revenue.toString()),
+      transactions: item.transactions,
+    }));
+
+    // Xử lý student growth data
+    const formattedStudentGrowth = studentGrowthData.map((item) => ({
+      year: item._id.year,
+      week: item._id.week,
+      newStudents: item.count,
+    }));
+
+    // Xử lý course completion rates
+    const formattedCompletionData = courseCompletionData.map((course) => {
+      const completedCount =
+        course.statuses.find((s) => s.status === "completed")?.count || 0;
+      const enrolledCount =
+        course.statuses.find((s) => s.status === "enrolled")?.count || 0;
+      const completionRate =
+        course.totalEnrollments > 0
+          ? Math.round((completedCount / course.totalEnrollments) * 100)
+          : 0;
+
       return {
-        month: i + 1,
-        revenue: parseFloat(monthData?.total.toString() || "0"),
+        courseId: course._id,
+        title: course.title,
+        totalEnrollments: course.totalEnrollments,
+        completed: completedCount,
+        inProgress: enrolledCount,
+        completionRate: completionRate,
+        statuses: course.statuses,
       };
     });
 
+    // Format revenue by course
+    const formattedRevenueByCourse = revenueByCourse.map((course) => ({
+      courseId: course._id,
+      title: course.title,
+      price: parseFloat(course.price?.toString() || "0"),
+      totalRevenue: parseFloat(course.totalRevenue.toString()),
+      totalTransactions: course.totalTransactions,
+      averageRevenuePerTransaction:
+        course.totalTransactions > 0
+          ? parseFloat(
+              (course.totalRevenue / course.totalTransactions).toString()
+            )
+          : 0,
+    }));
+
+    // Format enrollment status distribution (for pie chart)
+    const totalEnrollments = enrollmentStatusDistribution.reduce(
+      (sum, item) => sum + item.count,
+      0
+    );
+    const formattedEnrollmentStatus = enrollmentStatusDistribution.map(
+      (item) => ({
+        status: item.status,
+        count: item.count,
+        percentage:
+          totalEnrollments > 0
+            ? Math.round((item.count / totalEnrollments) * 100)
+            : 0,
+      })
+    );
+
+    // Format category sales distribution (for pie chart)
+    const totalCategoryRevenue = categorySalesDistribution.reduce(
+      (sum, item) => sum + parseFloat(item.revenue.toString()),
+      0
+    );
+    const formattedCategorySales = categorySalesDistribution.map((item) => ({
+      categoryId: item.categoryId,
+      categoryName: item.categoryName,
+      revenue: parseFloat(item.revenue.toString()),
+      enrollments: item.enrollments,
+      percentage:
+        totalCategoryRevenue > 0
+          ? Math.round(
+              (parseFloat(item.revenue.toString()) / totalCategoryRevenue) * 100
+            )
+          : 0,
+    }));
+
     res.status(200).json({
-      role: "instructor",
-      totalCourses,
-      totalStudents: totalStudents[0]?.total || 0,
-      totalRevenue: parseFloat(totalRevenueResult[0]?.total.toString() || "0"),
-      newStudentsThisMonth,
-      monthlySales: formattedMonthlySales,
+      success: true,
+      period: {
+        type: period,
+        startDate: dateRangeStart,
+        endDate: dateRangeEnd,
+      },
+      overview: {
+        role: "instructor",
+        totalCourses,
+        totalStudents: totalStudents[0]?.total || 0,
+        totalRevenue: parseFloat(
+          totalRevenueResult[0]?.total.toString() || "0"
+        ),
+        periodRevenue: parseFloat(
+          periodRevenueResult[0]?.total.toString() || "0"
+        ),
+        periodTransactions: periodRevenueResult[0]?.count || 0,
+        moneyLeft: parseFloat(instructor?.moneyLeft?.toString() || "0"),
+        newStudentsThisWeek,
+        newStudentsThisMonth,
+      },
+      analytics: {
+        monthlySales: formattedMonthlySales,
+        studentGrowth: formattedStudentGrowth,
+        topCoursesByRevenue,
+        topCoursesByStudents,
+        revenueByCourse: formattedRevenueByCourse,
+        courseCompletion: formattedCompletionData,
+      },
+      pieCharts: {
+        enrollmentStatus: formattedEnrollmentStatus,
+        revenueByCategory: formattedCategorySales,
+        revenueByCoursePieData: formattedRevenueByCourse.map((c) => ({
+          name: c.title,
+          value: c.totalRevenue,
+          percentage: totalRevenueResult[0]?.total
+            ? Math.round(
+                (c.totalRevenue /
+                  parseFloat(totalRevenueResult[0].total.toString())) *
+                  100
+              )
+            : 0,
+        })),
+        courseRatingDistribution: courseRating.breakdown,
+      },
       latestTransactions,
       courseRating,
     });
   } catch (error) {
     console.error("Lỗi khi lấy dữ liệu thống kê instructor:", error);
     res.status(500).json({
+      success: false,
       message: "Lỗi máy chủ khi lấy dữ liệu thống kê.",
       error: error.message,
     });
@@ -203,9 +826,24 @@ exports.getCourses = async (req, res) => {
       .populate("sections", "name")
       .sort({ createdAt: -1 });
 
+    // Get enrollment count for each course
+    const coursesWithEnrollmentCount = await Promise.all(
+      courses.map(async (course) => {
+        const enrollmentCount = await Enrollment.countDocuments({
+          courseId: course._id,
+          status: "enrolled",
+        });
+        const courseObj = course.toObject();
+        return {
+          ...courseObj,
+          studentsCount: enrollmentCount,
+        };
+      })
+    );
+
     res.status(200).json({
       success: true,
-      data: courses,
+      data: coursesWithEnrollmentCount,
     });
   } catch (error) {
     console.error("Error in getCourses:", error);
@@ -255,7 +893,21 @@ exports.getCourseById = async (req, res) => {
       });
     }
 
+    // Get enrollment count and rating statistics
+    const enrollmentCount = await Enrollment.countDocuments({
+      courseId: courseId,
+      status: "enrolled",
+    });
+
     const courseObj = course.toObject();
+    courseObj.enrollmentCount = enrollmentCount;
+
+    // Debug: Log rating information
+    console.log("Course Rating Debug:", {
+      courseId: courseId,
+      rating: courseObj.rating,
+      hasRating: courseObj.rating !== undefined && courseObj.rating !== null
+    });
 
     // Transform lesson data for frontend compatibility
     if (courseObj.sections) {
@@ -2400,13 +3052,43 @@ exports.getPublicProfile = async (req, res) => {
       createdBy: userId,
       status: "active",
     })
-      .select("title thumbnail price rating totalStudents")
-      .limit(6);
+      .select("title thumbnail price rating")
+      .populate("categoryIds", "name")
+      .sort({ createdAt: -1 });
 
-    // Calculate statistics
-    const totalStudents = await User.countDocuments({
-      enrolledCourses: { $in: courses.map((c) => c._id) },
+    // Get enrollment count for each course
+    const coursesWithEnrollmentCount = await Promise.all(
+      courses.map(async (course) => {
+        const enrollmentCount = await Enrollment.countDocuments({
+          courseId: course._id,
+          status: "enrolled",
+        });
+        const courseObj = course.toObject();
+        return {
+          ...courseObj,
+          enrollmentCount: enrollmentCount,
+        };
+      })
+    );
+
+    // Calculate total students from Enrollment table (consistent with enrollmentCount)
+    const totalStudents = await Enrollment.countDocuments({
+      courseId: { $in: courses.map((c) => c._id) },
+      status: "enrolled",
     });
+
+    // Calculate real-time statistics
+    const totalCourses = courses.length;
+    
+    // Get all feedbacks for instructor's courses
+    const feedbacks = await Feedback.find({
+      courseId: { $in: courses.map((c) => c._id) },
+    });
+    
+    const totalReviews = feedbacks.length;
+    const averageRating = totalReviews > 0
+      ? feedbacks.reduce((sum, feedback) => sum + feedback.rateStar, 0) / totalReviews
+      : 0;
 
     const response = {
       user: profile.userId,
@@ -2419,12 +3101,12 @@ exports.getPublicProfile = async (req, res) => {
         experience: profile.experience,
       },
       statistics: {
-        totalCourses: profile.totalCourses,
+        totalCourses: totalCourses,
         totalStudents: totalStudents,
-        averageRating: profile.averageRating,
-        totalReviews: profile.totalReviews,
+        averageRating: parseFloat(averageRating.toFixed(1)),
+        totalReviews: totalReviews,
       },
-      courses,
+      courses: coursesWithEnrollmentCount,
     };
 
     res.status(200).json({
@@ -2507,6 +3189,95 @@ exports.getInstructorStats = async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching instructor stats:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get all feedbacks for instructor's courses
+ * @route   GET /api/instructor/feedbacks/:userId
+ * @access  Public
+ */
+exports.getInstructorFeedbacks = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 10, sortBy = 'createdAt', order = 'desc' } = req.query;
+
+    // Check if instructor profile exists and is approved
+    const profile = await InstructorProfile.findOne({
+      userId,
+      applicationStatus: "approved",
+    });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Instructor not found",
+      });
+    }
+
+    // Get all courses by this instructor
+    const courses = await Course.find({ 
+      createdBy: userId,
+      status: "active"
+    }).select("_id title thumbnail");
+
+    const courseIds = courses.map((c) => c._id);
+
+    if (courseIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          feedbacks: [],
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: 0,
+            totalFeedbacks: 0,
+            hasMore: false,
+          },
+        },
+      });
+    }
+
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+    const sortOrder = order === 'asc' ? 1 : -1;
+
+    // Get feedbacks with populated user and course info
+    const feedbacks = await Feedback.find({
+      courseId: { $in: courseIds },
+    })
+      .populate("userId", "firstName lastName userImage")
+      .populate("courseId", "title thumbnail")
+      .sort({ [sortBy]: sortOrder })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get total count for pagination
+    const totalFeedbacks = await Feedback.countDocuments({
+      courseId: { $in: courseIds },
+    });
+
+    const totalPages = Math.ceil(totalFeedbacks / limit);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        feedbacks,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalFeedbacks,
+          hasMore: page < totalPages,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching instructor feedbacks:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
