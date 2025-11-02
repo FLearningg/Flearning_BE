@@ -10,6 +10,8 @@ const InstructorProfile = require("../models/instructorProfileModel");
 const Enrollment = require("../models/enrollmentModel");
 const Payment = require("../models/paymentModel");
 const Feedback = require("../models/feedbackModel");
+const Comment = require("../models/commentModel");
+const Progress = require("../models/progressModel");
 const mongoose = require("mongoose");
 const admin = require("firebase-admin");
 const fs = require("fs");
@@ -902,13 +904,6 @@ exports.getCourseById = async (req, res) => {
     const courseObj = course.toObject();
     courseObj.enrollmentCount = enrollmentCount;
 
-    // Debug: Log rating information
-    console.log("Course Rating Debug:", {
-      courseId: courseId,
-      rating: courseObj.rating,
-      hasRating: courseObj.rating !== undefined && courseObj.rating !== null
-    });
-
     // Transform lesson data for frontend compatibility
     if (courseObj.sections) {
       courseObj.sections = courseObj.sections.map((section) => ({
@@ -1201,10 +1196,6 @@ exports.deleteLesson = async (req, res) => {
   try {
     const { courseId, lessonId } = req.params;
 
-    console.log(
-      `🗑️ DELETE lesson request: courseId=${courseId}, lessonId=${lessonId}`
-    );
-
     // Check if course exists and belongs to the instructor
     const course = await checkCourseOwnership(courseId, req.user._id);
     if (!course) {
@@ -1217,14 +1208,11 @@ exports.deleteLesson = async (req, res) => {
     // Check if lesson exists and belongs to the course
     const lesson = await Lesson.findOne({ _id: lessonId, courseId });
     if (!lesson) {
-      console.log(`❌ Lesson ${lessonId} not found in course ${courseId}`);
       return res.status(404).json({
         success: false,
         message: "Lesson not found",
       });
     }
-
-    console.log(`📝 Found lesson: ${lesson.title} (type: ${lesson.type})`);
 
     // Remove lesson from section's lessons array
     const section = await Section.findById(lesson.sectionId);
@@ -1234,14 +1222,10 @@ exports.deleteLesson = async (req, res) => {
         (id) => id.toString() !== lessonId
       );
       await section.save();
-      console.log(
-        `📂 Removed lesson from section "${section.name}": ${beforeCount} -> ${section.lessons.length} lessons`
-      );
     }
 
     // Delete the lesson
     await Lesson.findByIdAndDelete(lessonId);
-    console.log(`✅ Lesson ${lessonId} deleted successfully`);
 
     res.status(200).json({
       success: true,
@@ -1494,10 +1478,6 @@ exports.createCourse = async (req, res) => {
     let lessonVideoIndex = 0;
     const movedFilesMap = new Map();
 
-    console.log(
-      `📦 Processing ${inputSections.length} sections for file extraction...`
-    );
-
     inputSections.forEach((section, sectionIndex) => {
       const lessons = section.lessons || [];
 
@@ -1517,17 +1497,11 @@ exports.createCourse = async (req, res) => {
         } else if (lessonType === "article") {
           mediaUrl = lesson.materialUrl || lesson.articleUrl;
           fileType = "lesson-article";
-          console.log(
-            `📄 Found article lesson: "${lesson.title}" with URL: ${
-              mediaUrl ? "YES" : "NO"
-            }`
-          );
         } else if (lessonType === "quiz") {
           // Quiz có thể có file đính kèm (Word document)
           if (lesson.quizData && lesson.quizData.fileUrl) {
             mediaUrl = lesson.quizData.fileUrl;
             fileType = "lesson-quiz-file";
-            console.log(`📝 Found quiz lesson with file: "${lesson.title}"`);
           }
         }
 
@@ -1537,9 +1511,6 @@ exports.createCourse = async (req, res) => {
           if (sourceDestination) {
             // Kiểm tra xem file có đang ở temporary folder không
             if (sourceDestination.startsWith("temporary/")) {
-              console.log(
-                `🔄 Will move ${fileType} from temporary: ${sourceDestination}`
-              );
               filesToMove.push({
                 sourceDestination,
                 folderType: folderTypeForLesson,
@@ -1550,10 +1521,6 @@ exports.createCourse = async (req, res) => {
                 originalUrl: mediaUrl,
                 lessonType: lessonType,
               });
-            } else {
-              console.log(
-                `✅ File already in correct location: ${sourceDestination}`
-              );
             }
             lessonVideoIndex++;
           }
@@ -1562,23 +1529,13 @@ exports.createCourse = async (req, res) => {
     });
 
     if (filesToMove.length > 0) {
-      console.log(
-        `📦 Found ${filesToMove.length} files to move from temporary folder`
-      );
-
       const movePromises = filesToMove.map(async (fileData) => {
         try {
-          console.log(
-            `🔄 Moving ${fileData.fileType}: ${fileData.sourceDestination} -> courses/${savedCourse._id}/${fileData.folderType}/`
-          );
-
           const moveResult = await moveFileFromTemporaryToCourse(
             fileData.sourceDestination,
             savedCourse._id,
             fileData.folderType
           );
-
-          console.log(`✅ Successfully moved: ${fileData.sourceDestination}`);
 
           // Lưu mapping cho tất cả các loại file (video, article, quiz)
           if (
@@ -1587,12 +1544,6 @@ exports.createCourse = async (req, res) => {
             fileData.fileType === "lesson-quiz-file"
           ) {
             movedFilesMap.set(fileData.originalUrl, moveResult.newUrl);
-            console.log(
-              `🔗 URL mapping: ${fileData.originalUrl.substring(
-                0,
-                50
-              )}... -> ${moveResult.newUrl.substring(0, 50)}...`
-            );
           }
 
           return moveResult;
@@ -1607,16 +1558,9 @@ exports.createCourse = async (req, res) => {
 
       try {
         const moveResults = await Promise.all(movePromises);
-        const successCount = moveResults.filter((r) => !r.error).length;
-        const failCount = moveResults.filter((r) => r.error).length;
-        console.log(
-          `✅ File migration complete: ${successCount} succeeded, ${failCount} failed`
-        );
       } catch (error) {
         console.error("❌ File move operation failed:", error.message);
       }
-    } else {
-      console.log(`ℹ️ No files need to be moved from temporary folder`);
     }
 
     // === TỰ ĐỘNG TẠO SECTION VÀ LESSON ===
@@ -1662,9 +1606,6 @@ exports.createCourse = async (req, res) => {
         // ✅ Cập nhật URL nếu file đã được di chuyển từ temporary
         if (mediaUrl && movedFilesMap.has(mediaUrl)) {
           mediaUrl = movedFilesMap.get(mediaUrl);
-          console.log(
-            `✅ Updated lesson media URL from temporary to course folder`
-          );
         }
 
         let finalQuizIds = [];
@@ -1794,16 +1735,6 @@ exports.createCourse = async (req, res) => {
 
         // ✅ Resolve URL from movedFilesMap if file was moved from temporary
         const resolvedMediaUrl = movedFilesMap.get(mediaUrl) || mediaUrl;
-        if (movedFilesMap.has(mediaUrl)) {
-          console.log(
-            `  🔗 Resolved URL for lesson "${
-              lessonData.title
-            }": ${mediaUrl.substring(0, 50)}... -> ${resolvedMediaUrl.substring(
-              0,
-              50
-            )}...`
-          );
-        }
 
         const lessonPayload = {
           courseId: savedCourse._id,
@@ -1901,13 +1832,6 @@ exports.updateCourse = async (req, res) => {
       sections, // Frontend có thể gửi sections data
     } = req.body;
 
-    console.log(`📝 UPDATE course request: courseId=${courseId}`);
-    console.log(
-      `📦 Request includes sections data: ${!!sections}, sections count: ${
-        sections?.length || 0
-      }`
-    );
-
     // Check if course exists and belongs to the instructor
     const course = await checkCourseOwnership(courseId, req.user._id);
     if (!course) {
@@ -1967,15 +1891,9 @@ exports.updateCourse = async (req, res) => {
       runValidators: true,
     });
 
-    console.log(`✅ Course basic info updated: ${updatedCourse.title}`);
-
     // === HANDLE SECTIONS/LESSONS UPDATE ===
     // If frontend sends sections data, sync the database state with it
     if (sections && Array.isArray(sections)) {
-      console.log(
-        `🔄 Processing ${sections.length} sections from update request...`
-      );
-
       let totalDurationSeconds = 0;
 
       // === DI CHUYỂN FILES TỪ TEMPORARY TRƯỚC KHI XỬ LÝ SECTIONS ===
@@ -2004,7 +1922,6 @@ exports.updateCourse = async (req, res) => {
               sourceDestination &&
               sourceDestination.startsWith("temporary/")
             ) {
-              console.log(`🔄 Found temporary file: ${sourceDestination}`);
               filesToMove.push({
                 sourceDestination,
                 folderType: `section_${sectionIndex + 1}/lesson_${
@@ -2021,16 +1938,8 @@ exports.updateCourse = async (req, res) => {
 
       // Move files from temporary to course folder
       if (filesToMove.length > 0) {
-        console.log(
-          `📦 Found ${filesToMove.length} files to move from temporary folder`
-        );
-
         const movePromises = filesToMove.map(async (fileData) => {
           try {
-            console.log(
-              `🔄 Moving ${fileData.fileType}: ${fileData.sourceDestination}`
-            );
-
             const moveResult = await moveFileFromTemporaryToCourse(
               fileData.sourceDestination,
               courseId,
@@ -2038,7 +1947,6 @@ exports.updateCourse = async (req, res) => {
             );
 
             movedFilesMap.set(fileData.originalUrl, moveResult.newUrl);
-            console.log(`✅ Moved: ${fileData.sourceDestination}`);
 
             return moveResult;
           } catch (error) {
@@ -2052,10 +1960,6 @@ exports.updateCourse = async (req, res) => {
 
         try {
           const moveResults = await Promise.all(movePromises);
-          const successCount = moveResults.filter((r) => !r.error).length;
-          console.log(
-            `✅ File migration complete: ${successCount}/${filesToMove.length} succeeded`
-          );
         } catch (error) {
           console.error("❌ File move operation failed:", error.message);
         }
@@ -2089,7 +1993,6 @@ exports.updateCourse = async (req, res) => {
             { new: true }
           );
           requestSectionIds.add(sectionData._id.toString());
-          console.log(`📝 Updated section: ${section.name}`);
         }
         // Otherwise create new section
         else if (sectionData.name && sectionData.name.trim() !== "") {
@@ -2100,7 +2003,6 @@ exports.updateCourse = async (req, res) => {
             lessons: [],
           });
           await section.save();
-          console.log(`➕ Created new section: ${section.name}`);
         } else {
           continue; // Skip invalid sections
         }
@@ -2149,9 +2051,6 @@ exports.updateCourse = async (req, res) => {
 
           // Resolve URL from movedFilesMap if file was moved from temporary
           const resolvedMediaUrl = movedFilesMap.get(mediaUrl) || mediaUrl;
-          console.log(
-            `[UPDATE COURSE] Lesson "${lessonData.title}": Original URL: ${mediaUrl}, Resolved URL: ${resolvedMediaUrl}`
-          );
 
           const lessonPayload = {
             courseId: courseId,
@@ -2180,17 +2079,11 @@ exports.updateCourse = async (req, res) => {
               { new: true, runValidators: true }
             );
             requestLessonIds.add(lessonData._id.toString());
-            console.log(
-              `  📝 Updated lesson: ${lesson.title} (${lesson.type})`
-            );
           }
           // Create new lesson
           else {
             lesson = new Lesson(lessonPayload);
             await lesson.save();
-            console.log(
-              `  ➕ Created lesson: ${lesson.title} (${lesson.type})`
-            );
           }
 
           updatedLessonIds.push(lesson._id);
@@ -2200,7 +2093,6 @@ exports.updateCourse = async (req, res) => {
         for (const currentLesson of currentLessons) {
           if (!requestLessonIds.has(currentLesson._id.toString())) {
             await Lesson.findByIdAndDelete(currentLesson._id);
-            console.log(`  🗑️ Deleted lesson: ${currentLesson.title}`);
           }
         }
 
@@ -2217,7 +2109,6 @@ exports.updateCourse = async (req, res) => {
           // Delete all lessons in this section first
           await Lesson.deleteMany({ sectionId: currentSection._id });
           await Section.findByIdAndDelete(currentSection._id);
-          console.log(`🗑️ Deleted section: ${currentSection.name}`);
         }
       }
 
@@ -2234,10 +2125,6 @@ exports.updateCourse = async (req, res) => {
       // Update course's sections array
       updatedCourse.sections = updatedSectionIds;
       await updatedCourse.save();
-
-      console.log(
-        `✅ Sections sync complete: ${updatedSectionIds.length} sections in course`
-      );
     }
 
     // Populate the updated course
@@ -2497,9 +2384,7 @@ exports.deleteLessonFile = async (req, res) => {
           if (exists) {
             await file.delete();
             deletionSuccess = true;
-            console.log(`✅ Successfully deleted file: ${filePath}`);
           } else {
-            console.log(`ℹ️ File not found in storage: ${filePath}`);
             deletionSuccess = true;
           }
         }
@@ -2545,21 +2430,10 @@ exports.updateLessonFile = async (req, res) => {
     const { lessonId } = req.params;
     const { materialUrl, fileType, videoUrl, url, fileUrl } = req.body;
 
-    console.log(`📝 UPDATE lesson file request:`, {
-      lessonId,
-      bodyKeys: Object.keys(req.body),
-      materialUrl,
-      videoUrl,
-      url,
-      fileUrl,
-      fileType,
-    });
-
     // Support multiple field names for URL
     const newFileUrl = materialUrl || videoUrl || url || fileUrl;
 
     if (!newFileUrl) {
-      console.log(`❌ No file URL provided in request body`);
       return res.status(400).json({
         success: false,
         message:
@@ -2589,8 +2463,6 @@ exports.updateLessonFile = async (req, res) => {
       });
     }
 
-    console.log(`✅ Found lesson: ${lesson.title} (${lesson.type})`);
-
     // Delete old file if exists
     if (lesson.materialUrl) {
       try {
@@ -2604,7 +2476,6 @@ exports.updateLessonFile = async (req, res) => {
             const [exists] = await file.exists();
             if (exists) {
               await file.delete();
-              console.log(`✅ Deleted old file: ${filePath}`);
             }
           }
         }
@@ -2621,13 +2492,10 @@ exports.updateLessonFile = async (req, res) => {
     if (fileType) {
       if (fileType === "video" || fileType === "article") {
         lesson.type = fileType;
-        console.log(`📝 Updated lesson type to: ${fileType}`);
       }
     }
 
     await lesson.save();
-
-    console.log(`✅ Lesson file updated successfully: ${lesson.title}`);
 
     res.status(200).json({
       success: true,
@@ -3192,6 +3060,325 @@ exports.getInstructorStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get course analytics for a specific course
+ * @route   GET /api/instructor/courses/:courseId/analytics
+ * @access  Private (Instructor only)
+ * @query   period - 'week' | 'month' | 'year' (default: 'month')
+ */
+exports.getCourseAnalytics = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const instructorId = req.user._id;
+    const { period = 'month' } = req.query;
+
+    // Verify course belongs to instructor
+    const course = await Course.findOne({
+      _id: courseId,
+      createdBy: instructorId,
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found or you don't have permission to view it",
+      });
+    }
+
+    const today = new Date();
+    let startDate, endDate, labels, dateFormat;
+
+    // Determine date range and labels based on period
+    if (period === 'all') {
+      // All-time data - no date filter, just get summary
+      startDate = new Date(0); // Beginning of time
+      endDate = new Date();
+      labels = [];
+      dateFormat = 'all';
+    } else if (period === 'week') {
+      startDate = new Date(today);
+      startDate.setDate(today.getDate() - today.getDay()); // Start of week (Sunday)
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(today);
+      endDate.setHours(23, 59, 59, 999);
+      labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      dateFormat = 'dayOfWeek';
+    } else if (period === 'year') {
+      startDate = new Date(today.getFullYear(), 0, 1);
+      endDate = new Date(today.getFullYear(), 11, 31, 23, 59, 59);
+      labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      dateFormat = 'month';
+    } else { // month (default)
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+      const daysInMonth = endDate.getDate();
+      labels = [];
+      for (let i = 1; i <= daysInMonth; i += Math.ceil(daysInMonth / 7)) {
+        labels.push(`${today.toLocaleString('en-US', { month: 'short' })} ${String(i).padStart(2, '0')}`);
+      }
+      dateFormat = 'date';
+    }
+
+    // Convert courseId to ObjectId if it's a valid string
+    let courseObjectId;
+    if (mongoose.Types.ObjectId.isValid(courseId)) {
+      courseObjectId = new mongoose.Types.ObjectId(courseId);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid course ID format",
+      });
+    }
+
+    // Get enrollments for this course (filtered by date range for charts)
+    const enrollments = await Enrollment.find({
+      courseId: courseObjectId,
+      createdAt: { $gte: startDate, $lte: endDate }
+    }).select('createdAt userId');
+
+    // Get total all-time student count for this course
+    const totalStudents = await Enrollment.countDocuments({
+      courseId: courseObjectId,
+      status: { $in: ['enrolled', 'completed'] }
+    });
+
+    // Get all sections and lessons for this course
+    const sections = await Section.find({ courseId: courseObjectId }).select('lessons');
+    const lessonIds = sections.flatMap(section => section.lessons);
+
+    // Get real comments (from lessons) for this course
+    const comments = await Comment.find({
+      lessonId: { $in: lessonIds },
+      createdAt: { $gte: startDate, $lte: endDate }
+    }).select('createdAt');
+
+    // Get course progress data (views simulation based on progress updates)
+    const progressUpdates = await Progress.find({
+      courseId: courseObjectId,
+      updatedAt: { $gte: startDate, $lte: endDate }
+    }).select('updatedAt');
+
+    // Get revenue data with proper date formatting
+    let revenueData;
+    if (dateFormat === 'dayOfWeek') {
+      revenueData = await Payment.aggregate([
+        {
+          $match: {
+            status: 'completed',
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $lookup: {
+            from: 'enrollments',
+            localField: 'enrollmentIds',
+            foreignField: '_id',
+            as: 'enrollments'
+          }
+        },
+        {
+          $unwind: '$enrollments'
+        },
+        {
+          $match: {
+            'enrollments.courseId': courseObjectId
+          }
+        },
+        {
+          $group: {
+            _id: { $dayOfWeek: '$createdAt' },
+            totalRevenue: { $sum: { $toDouble: '$amount' } }
+          }
+        }
+      ]);
+    } else if (dateFormat === 'month') {
+      revenueData = await Payment.aggregate([
+        {
+          $match: {
+            status: 'completed',
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $lookup: {
+            from: 'enrollments',
+            localField: 'enrollmentIds',
+            foreignField: '_id',
+            as: 'enrollments'
+          }
+        },
+        {
+          $unwind: '$enrollments'
+        },
+        {
+          $match: {
+            'enrollments.courseId': courseObjectId
+          }
+        },
+        {
+          $group: {
+            _id: { $month: '$createdAt' },
+            totalRevenue: { $sum: { $toDouble: '$amount' } }
+          }
+        }
+      ]);
+    } else {
+      revenueData = await Payment.aggregate([
+        {
+          $match: {
+            status: 'completed',
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $lookup: {
+            from: 'enrollments',
+            localField: 'enrollmentIds',
+            foreignField: '_id',
+            as: 'enrollments'
+          }
+        },
+        {
+          $unwind: '$enrollments'
+        },
+        {
+          $match: {
+            'enrollments.courseId': courseObjectId
+          }
+        },
+        {
+          $group: {
+            _id: { $dayOfMonth: '$createdAt' },
+            totalRevenue: { $sum: { $toDouble: '$amount' } }
+          }
+        }
+      ]);
+    }
+
+    // Get rating breakdown
+    const feedbacks = await Feedback.find({ courseId: courseObjectId }).select('rateStar');
+    const ratingBreakdown = [0, 0, 0, 0, 0]; // 1-5 stars
+    feedbacks.forEach(feedback => {
+      if (feedback.rateStar >= 1 && feedback.rateStar <= 5) {
+        ratingBreakdown[feedback.rateStar - 1]++;
+      }
+    });
+
+    const totalRatings = feedbacks.length;
+    const ratingPercentages = ratingBreakdown.map(count => 
+      totalRatings > 0 ? Math.round((count / totalRatings) * 100) : 0
+    );
+
+    // Helper function to aggregate data by time period
+    const aggregateByPeriod = (data, dateField = 'createdAt') => {
+      const counts = new Array(labels.length).fill(0);
+      
+      data.forEach(item => {
+        const date = new Date(item[dateField]);
+        let index;
+        
+        if (dateFormat === 'dayOfWeek') {
+          index = date.getDay();
+        } else if (dateFormat === 'month') {
+          index = date.getMonth();
+        } else { // date
+          const day = date.getDate();
+          index = Math.floor((day - 1) / Math.ceil(endDate.getDate() / 7));
+          index = Math.min(index, labels.length - 1);
+        }
+        
+        if (index >= 0 && index < counts.length) {
+          counts[index]++;
+        }
+      });
+      
+      return counts;
+    };
+
+    // Aggregate revenue by period
+    const revenueByPeriod = new Array(labels.length).fill(0);
+    revenueData.forEach(item => {
+      let index = item._id;
+      if (dateFormat === 'dayOfWeek') {
+        // $dayOfWeek returns 1 (Sunday) to 7 (Saturday), convert to 0-6
+        index = index - 1;
+      } else if (dateFormat === 'month') {
+        // $month returns 1-12, convert to 0-11
+        index = index - 1;
+      } else {
+        // For date format, map day to label index
+        const day = index;
+        index = Math.floor((day - 1) / Math.ceil(endDate.getDate() / 7));
+        index = Math.min(index, labels.length - 1);
+      }
+      if (index >= 0 && index < revenueByPeriod.length) {
+        revenueByPeriod[index] = item.totalRevenue;
+      }
+    });
+
+    const commentsData = aggregateByPeriod(comments);
+    const viewsData = aggregateByPeriod(progressUpdates, 'updatedAt');
+
+    // Calculate total revenue (for 'all' period, sum directly from revenueData)
+    const totalRevenue = dateFormat === 'all' 
+      ? revenueData.reduce((sum, item) => sum + item.totalRevenue, 0)
+      : revenueByPeriod.reduce((a, b) => a + b, 0);
+
+    // Calculate rating trend (simplified - last 7 data points)
+    const recentFeedbacks = await Feedback.find({ courseId: courseObjectId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .select('rateStar');
+    
+    const ratingTrend = [];
+    const chunkSize = Math.ceil(recentFeedbacks.length / 7);
+    for (let i = 0; i < 7; i++) {
+      const chunk = recentFeedbacks.slice(i * chunkSize, (i + 1) * chunkSize);
+      const avgRating = chunk.length > 0 
+        ? chunk.reduce((sum, f) => sum + f.rateStar, 0) / chunk.length 
+        : 0;
+      ratingTrend.push(Math.round(avgRating * 10)); // Scale for visualization
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        revenue: {
+          labels: labels,
+          data: revenueByPeriod,
+        },
+        courseOverview: {
+          labels: labels,
+          comments: commentsData,
+          views: viewsData,
+        },
+        ratingBreakdown: {
+          stars: [5, 4, 3, 2, 1],
+          percentages: ratingPercentages.reverse(), // 5 stars first
+          counts: ratingBreakdown.reverse(),
+        },
+        ratingTrend: ratingTrend,
+        summary: {
+          totalRevenue: totalRevenue,
+          totalStudents: totalStudents,
+          totalComments: commentsData.reduce((a, b) => a + b, 0),
+          totalViews: viewsData.reduce((a, b) => a + b, 0),
+          averageRating: course.rating || 0,
+          totalRatings: totalRatings,
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching course analytics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
       error: error.message,
     });
   }
