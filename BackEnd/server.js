@@ -20,6 +20,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
+const withdrawRoutes = require("./routes/withdrawalRoutes");
 const {
   adminRouter: discountAdminRouter,
   instructorRouter: discountInstructorRouter,
@@ -211,6 +212,8 @@ app.use("/api/proctoring", proctoringRoutes);
 app.use("/api/recommendations", recommendationRoutes);
 // Survey routes
 app.use("/api/survey", surveyRoutes);
+// Withdrawal routes
+app.use("/api/withdrawals", withdrawRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 
