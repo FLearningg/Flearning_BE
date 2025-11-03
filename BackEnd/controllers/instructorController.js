@@ -326,11 +326,11 @@ exports.getDashboardStats = async (req, res) => {
               },
             ],
             ratingBreakdown: [
-              { 
-                $group: { 
-                  _id: "$rateStar", 
-                  count: { $sum: 1 } 
-                } 
+              {
+                $group: {
+                  _id: "$rateStar",
+                  count: { $sum: 1 },
+                },
               },
               { $sort: { _id: -1 } },
             ],
@@ -676,9 +676,7 @@ exports.getDashboardStats = async (req, res) => {
           stars: star,
           count: count,
           percentage:
-            totalFeedbacks > 0
-              ? Math.round((count / totalFeedbacks) * 100)
-              : 0,
+            totalFeedbacks > 0 ? Math.round((count / totalFeedbacks) * 100) : 0,
         };
       });
     }
@@ -3075,16 +3073,18 @@ exports.getPublicProfile = async (req, res) => {
 
     // Calculate real-time statistics
     const totalCourses = courses.length;
-    
+
     // Get all feedbacks for instructor's courses
     const feedbacks = await Feedback.find({
       courseId: { $in: courses.map((c) => c._id) },
     });
-    
+
     const totalReviews = feedbacks.length;
-    const averageRating = totalReviews > 0
-      ? feedbacks.reduce((sum, feedback) => sum + feedback.rateStar, 0) / totalReviews
-      : 0;
+    const averageRating =
+      totalReviews > 0
+        ? feedbacks.reduce((sum, feedback) => sum + feedback.rateStar, 0) /
+          totalReviews
+        : 0;
 
     const response = {
       user: profile.userId,
@@ -3203,7 +3203,7 @@ exports.getCourseAnalytics = async (req, res) => {
   try {
     const { courseId } = req.params;
     const instructorId = req.user._id;
-    const { period = 'month' } = req.query;
+    const { period = "month" } = req.query;
 
     // Verify course belongs to instructor
     const course = await Course.findOne({
@@ -3222,34 +3222,59 @@ exports.getCourseAnalytics = async (req, res) => {
     let startDate, endDate, labels, dateFormat;
 
     // Determine date range and labels based on period
-    if (period === 'all') {
+    if (period === "all") {
       // All-time data - no date filter, just get summary
       startDate = new Date(0); // Beginning of time
       endDate = new Date();
       labels = [];
-      dateFormat = 'all';
-    } else if (period === 'week') {
+      dateFormat = "all";
+    } else if (period === "week") {
       startDate = new Date(today);
       startDate.setDate(today.getDate() - today.getDay()); // Start of week (Sunday)
       startDate.setHours(0, 0, 0, 0);
       endDate = new Date(today);
       endDate.setHours(23, 59, 59, 999);
-      labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      dateFormat = 'dayOfWeek';
-    } else if (period === 'year') {
+      labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      dateFormat = "dayOfWeek";
+    } else if (period === "year") {
       startDate = new Date(today.getFullYear(), 0, 1);
       endDate = new Date(today.getFullYear(), 11, 31, 23, 59, 59);
-      labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      dateFormat = 'month';
-    } else { // month (default)
+      labels = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      dateFormat = "month";
+    } else {
+      // month (default)
       startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+      endDate = new Date(
+        today.getFullYear(),
+        today.getMonth() + 1,
+        0,
+        23,
+        59,
+        59
+      );
       const daysInMonth = endDate.getDate();
       labels = [];
       for (let i = 1; i <= daysInMonth; i += Math.ceil(daysInMonth / 7)) {
-        labels.push(`${today.toLocaleString('en-US', { month: 'short' })} ${String(i).padStart(2, '0')}`);
+        labels.push(
+          `${today.toLocaleString("en-US", { month: "short" })} ${String(
+            i
+          ).padStart(2, "0")}`
+        );
       }
-      dateFormat = 'date';
+      dateFormat = "date";
     }
 
     // Convert courseId to ObjectId if it's a valid string
@@ -3266,176 +3291,181 @@ exports.getCourseAnalytics = async (req, res) => {
     // Get enrollments for this course (filtered by date range for charts)
     const enrollments = await Enrollment.find({
       courseId: courseObjectId,
-      createdAt: { $gte: startDate, $lte: endDate }
-    }).select('createdAt userId');
+      createdAt: { $gte: startDate, $lte: endDate },
+    }).select("createdAt userId");
 
     // Get total all-time student count for this course
     const totalStudents = await Enrollment.countDocuments({
       courseId: courseObjectId,
-      status: { $in: ['enrolled', 'completed'] }
+      status: { $in: ["enrolled", "completed"] },
     });
 
     // Get all sections and lessons for this course
-    const sections = await Section.find({ courseId: courseObjectId }).select('lessons');
-    const lessonIds = sections.flatMap(section => section.lessons);
+    const sections = await Section.find({ courseId: courseObjectId }).select(
+      "lessons"
+    );
+    const lessonIds = sections.flatMap((section) => section.lessons);
 
     // Get real comments (from lessons) for this course
     const comments = await Comment.find({
       lessonId: { $in: lessonIds },
-      createdAt: { $gte: startDate, $lte: endDate }
-    }).select('createdAt');
+      createdAt: { $gte: startDate, $lte: endDate },
+    }).select("createdAt");
 
     // Get course progress data (views simulation based on progress updates)
     const progressUpdates = await Progress.find({
       courseId: courseObjectId,
-      updatedAt: { $gte: startDate, $lte: endDate }
-    }).select('updatedAt');
+      updatedAt: { $gte: startDate, $lte: endDate },
+    }).select("updatedAt");
 
     // Get revenue data with proper date formatting
     let revenueData;
-    if (dateFormat === 'dayOfWeek') {
+    if (dateFormat === "dayOfWeek") {
       revenueData = await Payment.aggregate([
         {
           $match: {
-            status: 'completed',
-            createdAt: { $gte: startDate, $lte: endDate }
-          }
+            status: "completed",
+            createdAt: { $gte: startDate, $lte: endDate },
+          },
         },
         {
           $lookup: {
-            from: 'enrollments',
-            localField: 'enrollmentIds',
-            foreignField: '_id',
-            as: 'enrollments'
-          }
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
         },
         {
-          $unwind: '$enrollments'
+          $unwind: "$enrollments",
         },
         {
           $match: {
-            'enrollments.courseId': courseObjectId
-          }
+            "enrollments.courseId": courseObjectId,
+          },
         },
         {
           $group: {
-            _id: { $dayOfWeek: '$createdAt' },
-            totalRevenue: { $sum: { $toDouble: '$amount' } }
-          }
-        }
+            _id: { $dayOfWeek: "$createdAt" },
+            totalRevenue: { $sum: { $toDouble: "$amount" } },
+          },
+        },
       ]);
-    } else if (dateFormat === 'month') {
+    } else if (dateFormat === "month") {
       revenueData = await Payment.aggregate([
         {
           $match: {
-            status: 'completed',
-            createdAt: { $gte: startDate, $lte: endDate }
-          }
+            status: "completed",
+            createdAt: { $gte: startDate, $lte: endDate },
+          },
         },
         {
           $lookup: {
-            from: 'enrollments',
-            localField: 'enrollmentIds',
-            foreignField: '_id',
-            as: 'enrollments'
-          }
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
         },
         {
-          $unwind: '$enrollments'
+          $unwind: "$enrollments",
         },
         {
           $match: {
-            'enrollments.courseId': courseObjectId
-          }
+            "enrollments.courseId": courseObjectId,
+          },
         },
         {
           $group: {
-            _id: { $month: '$createdAt' },
-            totalRevenue: { $sum: { $toDouble: '$amount' } }
-          }
-        }
+            _id: { $month: "$createdAt" },
+            totalRevenue: { $sum: { $toDouble: "$amount" } },
+          },
+        },
       ]);
     } else {
       revenueData = await Payment.aggregate([
         {
           $match: {
-            status: 'completed',
-            createdAt: { $gte: startDate, $lte: endDate }
-          }
+            status: "completed",
+            createdAt: { $gte: startDate, $lte: endDate },
+          },
         },
         {
           $lookup: {
-            from: 'enrollments',
-            localField: 'enrollmentIds',
-            foreignField: '_id',
-            as: 'enrollments'
-          }
+            from: "enrollments",
+            localField: "enrollmentIds",
+            foreignField: "_id",
+            as: "enrollments",
+          },
         },
         {
-          $unwind: '$enrollments'
+          $unwind: "$enrollments",
         },
         {
           $match: {
-            'enrollments.courseId': courseObjectId
-          }
+            "enrollments.courseId": courseObjectId,
+          },
         },
         {
           $group: {
-            _id: { $dayOfMonth: '$createdAt' },
-            totalRevenue: { $sum: { $toDouble: '$amount' } }
-          }
-        }
+            _id: { $dayOfMonth: "$createdAt" },
+            totalRevenue: { $sum: { $toDouble: "$amount" } },
+          },
+        },
       ]);
     }
 
     // Get rating breakdown
-    const feedbacks = await Feedback.find({ courseId: courseObjectId }).select('rateStar');
+    const feedbacks = await Feedback.find({ courseId: courseObjectId }).select(
+      "rateStar"
+    );
     const ratingBreakdown = [0, 0, 0, 0, 0]; // 1-5 stars
-    feedbacks.forEach(feedback => {
+    feedbacks.forEach((feedback) => {
       if (feedback.rateStar >= 1 && feedback.rateStar <= 5) {
         ratingBreakdown[feedback.rateStar - 1]++;
       }
     });
 
     const totalRatings = feedbacks.length;
-    const ratingPercentages = ratingBreakdown.map(count => 
+    const ratingPercentages = ratingBreakdown.map((count) =>
       totalRatings > 0 ? Math.round((count / totalRatings) * 100) : 0
     );
 
     // Helper function to aggregate data by time period
-    const aggregateByPeriod = (data, dateField = 'createdAt') => {
+    const aggregateByPeriod = (data, dateField = "createdAt") => {
       const counts = new Array(labels.length).fill(0);
-      
-      data.forEach(item => {
+
+      data.forEach((item) => {
         const date = new Date(item[dateField]);
         let index;
-        
-        if (dateFormat === 'dayOfWeek') {
+
+        if (dateFormat === "dayOfWeek") {
           index = date.getDay();
-        } else if (dateFormat === 'month') {
+        } else if (dateFormat === "month") {
           index = date.getMonth();
-        } else { // date
+        } else {
+          // date
           const day = date.getDate();
           index = Math.floor((day - 1) / Math.ceil(endDate.getDate() / 7));
           index = Math.min(index, labels.length - 1);
         }
-        
+
         if (index >= 0 && index < counts.length) {
           counts[index]++;
         }
       });
-      
+
       return counts;
     };
 
     // Aggregate revenue by period
     const revenueByPeriod = new Array(labels.length).fill(0);
-    revenueData.forEach(item => {
+    revenueData.forEach((item) => {
       let index = item._id;
-      if (dateFormat === 'dayOfWeek') {
+      if (dateFormat === "dayOfWeek") {
         // $dayOfWeek returns 1 (Sunday) to 7 (Saturday), convert to 0-6
         index = index - 1;
-      } else if (dateFormat === 'month') {
+      } else if (dateFormat === "month") {
         // $month returns 1-12, convert to 0-11
         index = index - 1;
       } else {
@@ -3450,26 +3480,28 @@ exports.getCourseAnalytics = async (req, res) => {
     });
 
     const commentsData = aggregateByPeriod(comments);
-    const viewsData = aggregateByPeriod(progressUpdates, 'updatedAt');
+    const viewsData = aggregateByPeriod(progressUpdates, "updatedAt");
 
     // Calculate total revenue (for 'all' period, sum directly from revenueData)
-    const totalRevenue = dateFormat === 'all' 
-      ? revenueData.reduce((sum, item) => sum + item.totalRevenue, 0)
-      : revenueByPeriod.reduce((a, b) => a + b, 0);
+    const totalRevenue =
+      dateFormat === "all"
+        ? revenueData.reduce((sum, item) => sum + item.totalRevenue, 0)
+        : revenueByPeriod.reduce((a, b) => a + b, 0);
 
     // Calculate rating trend (simplified - last 7 data points)
     const recentFeedbacks = await Feedback.find({ courseId: courseObjectId })
       .sort({ createdAt: -1 })
       .limit(50)
-      .select('rateStar');
-    
+      .select("rateStar");
+
     const ratingTrend = [];
     const chunkSize = Math.ceil(recentFeedbacks.length / 7);
     for (let i = 0; i < 7; i++) {
       const chunk = recentFeedbacks.slice(i * chunkSize, (i + 1) * chunkSize);
-      const avgRating = chunk.length > 0 
-        ? chunk.reduce((sum, f) => sum + f.rateStar, 0) / chunk.length 
-        : 0;
+      const avgRating =
+        chunk.length > 0
+          ? chunk.reduce((sum, f) => sum + f.rateStar, 0) / chunk.length
+          : 0;
       ratingTrend.push(Math.round(avgRating * 10)); // Scale for visualization
     }
 
@@ -3498,15 +3530,14 @@ exports.getCourseAnalytics = async (req, res) => {
           totalViews: viewsData.reduce((a, b) => a + b, 0),
           averageRating: course.rating || 0,
           totalRatings: totalRatings,
-        }
-      }
+        },
+      },
     });
-
   } catch (error) {
-    console.error('Error fetching course analytics:', error);
+    console.error("Error fetching course analytics:", error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -3520,7 +3551,12 @@ exports.getCourseAnalytics = async (req, res) => {
 exports.getInstructorFeedbacks = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { page = 1, limit = 10, sortBy = 'createdAt', order = 'desc' } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "createdAt",
+      order = "desc",
+    } = req.query;
 
     // Check if instructor profile exists and is approved
     const profile = await InstructorProfile.findOne({
@@ -3536,9 +3572,9 @@ exports.getInstructorFeedbacks = async (req, res) => {
     }
 
     // Get all courses by this instructor
-    const courses = await Course.find({ 
+    const courses = await Course.find({
       createdBy: userId,
-      status: "active"
+      status: "active",
     }).select("_id title thumbnail");
 
     const courseIds = courses.map((c) => c._id);
@@ -3560,7 +3596,7 @@ exports.getInstructorFeedbacks = async (req, res) => {
 
     // Calculate pagination
     const skip = (page - 1) * limit;
-    const sortOrder = order === 'asc' ? 1 : -1;
+    const sortOrder = order === "asc" ? 1 : -1;
 
     // Get feedbacks with populated user and course info
     const feedbacks = await Feedback.find({
@@ -3598,5 +3634,57 @@ exports.getInstructorFeedbacks = async (req, res) => {
       message: "Server error",
       error: error.message,
     });
+  }
+};
+
+/**
+ * API: Cập nhật thông tin thanh toán (Payout Details)
+ * Dùng cho: Instructor
+ * PUT /api/instructor/payout-details
+ */
+exports.updatePayoutDetails = async (req, res) => {
+  const { bankName, accountNumber, accountHolderName } = req.body;
+  const instructorId = req.user._id; // Lấy từ middleware authorize
+
+  // 1. Validate đầu vào
+  if (!bankName || !accountNumber || !accountHolderName) {
+    return res.status(400).json({
+      message:
+        "Vui lòng cung cấp đầy đủ: Tên ngân hàng, Số tài khoản, và Tên chủ tài khoản.",
+    });
+  }
+
+  try {
+    // 2. Tìm và cập nhật user
+    const updatedUser = await User.findByIdAndUpdate(
+      instructorId,
+      {
+        $set: {
+          payoutDetails: {
+            bankName: bankName.trim(),
+            accountNumber: accountNumber.trim(),
+            accountHolderName: accountHolderName.trim(),
+          },
+        },
+      },
+      {
+        new: true, // Trả về tài liệu đã cập nhật
+        runValidators: true, // Chạy qua các validation (nếu có)
+        select: "payoutDetails", // Chỉ trả về trường payoutDetails
+      }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng." });
+    }
+
+    // 3. Trả về kết quả
+    res.status(200).json({
+      message: "Cập nhật thông tin thanh toán thành công.",
+      payoutDetails: updatedUser.payoutDetails,
+    });
+  } catch (error) {
+    console.error("Lỗi khi cập nhật payout details:", error);
+    res.status(500).json({ message: "Lỗi máy chủ nội bộ." });
   }
 };

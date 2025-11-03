@@ -22,6 +22,7 @@ const {
   getPublicProfile,
   getInstructorStats,
   getInstructorFeedbacks,
+  updatePayoutDetails,
 } = require("../controllers/instructorController");
 const authorize = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
@@ -81,5 +82,7 @@ router.delete("/files", deleteFile);
 // Temporary file management routes
 router.get("/temporary-files/:folderType", getTemporaryFiles);
 router.post("/move-to-course", moveFileFromTemporary);
+
+router.put("/payout-details", updatePayoutDetails);
 
 module.exports = router;
