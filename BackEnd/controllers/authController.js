@@ -76,7 +76,7 @@ exports.register = async (req, res) => {
 };
 
 /**
- * @desc    Verify user's email
+ * @desc    Verify user's email (for regular user registration)
  * @route   GET /api/auth/verify-email/:token
  * @access  Public
  */
@@ -113,39 +113,6 @@ exports.verifyEmail = async (req, res) => {
     await user.save();
     console.log("User status updated to verified for:", user.email);
 
-    // Update instructor profile status if exists
-    const instructorProfile = await InstructorProfile.findOne({ 
-      userId: user._id,
-      applicationStatus: "emailNotVerified" 
-    });
-    
-    console.log("Looking for instructor profile for user ID:", user._id);
-    console.log("Found instructor profile:", instructorProfile ? "YES" : "NO");
-    
-    if (instructorProfile) {
-      console.log("Current profile status:", instructorProfile.applicationStatus);
-      instructorProfile.applicationStatus = "pending";
-      await instructorProfile.save();
-      console.log("Updated instructor profile status to pending for user:", user.email);
-      
-      // Kích hoạt AI review ngay sau khi verify email
-      console.log("🤖 Scheduling AI review immediately for instructor profile:", instructorProfile._id);
-      
-      // Chỉ delay 1 giây để đảm bảo database đã commit
-      setTimeout(() => {
-        console.log("🚀 Starting AI review for:", instructorProfile._id);
-        reviewInstructorProfile(instructorProfile._id)
-          .then((aiReviewResult) => {
-            console.log("✅ AI Review completed successfully:", aiReviewResult);
-          })
-          .catch((error) => {
-            console.error("❌ Error in AI Review:", error);
-          });
-      }, 1000); // Only 1 second delay
-    } else {
-      console.log("No instructor profile found with status 'emailNotVerified' for user:", user.email);
-    }
-
     await tokenDocument.deleteOne();
 
     res.status(200).send("Email verified successfully.");
@@ -154,6 +121,164 @@ exports.verifyEmail = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+/**
+ * @desc    Verify instructor email (triggers AI review)
+ * @route   GET /api/auth/verify-instructor-email/:token
+ * @access  Public
+ */
+exports.verifyInstructorEmail = async (req, res) => {
+  try {
+    const receivedToken = req.params.token;
+    console.log("Backend received instructor token from URL:", receivedToken);
+
+    const tokenDocument = await Token.findOne({ token: receivedToken });
+    console.log(
+      "Token search result in DB (Token.findOne):",
+      tokenDocument
+    );
+
+    if (!tokenDocument) {
+      return res
+        .status(400)
+        .send(
+          "Invalid or expired link (token not found in DB)."
+        );
+    }
+
+    const user = await User.findById(tokenDocument.userId);
+    if (!user) {
+      return res.status(400).send("User not found.");
+    }
+
+    // Verify user email if not already verified
+    if (user.status !== "verified") {
+      user.status = "verified";
+      await user.save();
+      console.log("User status updated to verified for:", user.email);
+    }
+
+    // Update instructor profile status from emailNotVerified to pending
+    const instructorProfile = await InstructorProfile.findOne({ 
+      userId: user._id,
+      applicationStatus: "emailNotVerified" 
+    });
+    
+    console.log("Looking for instructor profile for user ID:", user._id);
+    console.log("Found instructor profile:", instructorProfile ? "YES" : "NO");
+    
+    if (!instructorProfile) {
+      await tokenDocument.deleteOne();
+      return res.status(400).send("No pending instructor application found.");
+    }
+
+    console.log("Current profile status:", instructorProfile.applicationStatus);
+    instructorProfile.applicationStatus = "pending";
+    await instructorProfile.save();
+    console.log("Updated instructor profile status to pending for user:", user.email);
+    
+    // Trigger AI review immediately after instructor email verification
+    console.log("🤖 Triggering AI review for instructor profile:", instructorProfile._id);
+    
+    // Delay 1 second to ensure database commit
+    setTimeout(() => {
+      console.log("🚀 Starting AI review for:", instructorProfile._id);
+      reviewInstructorProfile(instructorProfile._id)
+        .then((aiReviewResult) => {
+          console.log("✅ AI Review completed successfully:", aiReviewResult);
+        })
+        .catch((error) => {
+          console.error("❌ Error in AI Review:", error);
+        });
+    }, 1000); // Only 1 second delay
+
+    await tokenDocument.deleteOne();
+
+    res.status(200).send("Instructor email verified successfully. Your application is now being reviewed.");
+  } catch (error) {
+    console.error("Error in verifyInstructorEmail function:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Verify instructor application (for users with verified email)
+ * @route   GET /api/auth/verify-instructor-application/:token
+ * @access  Public
+ */
+exports.verifyInstructorApplication = async (req, res) => {
+  try {
+    const receivedToken = req.params.token;
+    console.log("Backend received instructor application token from URL:", receivedToken);
+
+    const tokenDocument = await Token.findOne({ token: receivedToken });
+    console.log(
+      "Token search result in DB (Token.findOne):",
+      tokenDocument
+    );
+
+    if (!tokenDocument) {
+      return res
+        .status(400)
+        .send(
+          "Invalid or expired link (token not found in DB)."
+        );
+    }
+
+    const user = await User.findById(tokenDocument.userId);
+    if (!user) {
+      return res.status(400).send("User not found.");
+    }
+
+    // User should already be verified
+    if (user.status !== "verified") {
+      await tokenDocument.deleteOne();
+      return res.status(400).send("Please verify your email first before verifying instructor application.");
+    }
+
+    // Update instructor profile status from emailNotVerified to pending
+    const instructorProfile = await InstructorProfile.findOne({ 
+      userId: user._id,
+      applicationStatus: "emailNotVerified" 
+    });
+    
+    console.log("Looking for instructor profile for user ID:", user._id);
+    console.log("Found instructor profile:", instructorProfile ? "YES" : "NO");
+    
+    if (!instructorProfile) {
+      await tokenDocument.deleteOne();
+      return res.status(400).send("No pending instructor application found.");
+    }
+
+    console.log("Current profile status:", instructorProfile.applicationStatus);
+    instructorProfile.applicationStatus = "pending";
+    await instructorProfile.save();
+    console.log("Updated instructor profile status to pending for user:", user.email);
+    
+    // Trigger AI review immediately after application verification
+    console.log("🤖 Triggering AI review for instructor application:", instructorProfile._id);
+    
+    // Delay 1 second to ensure database commit
+    setTimeout(() => {
+      console.log("🚀 Starting AI review for:", instructorProfile._id);
+      reviewInstructorProfile(instructorProfile._id)
+        .then((aiReviewResult) => {
+          console.log("✅ AI Review completed successfully:", aiReviewResult);
+        })
+        .catch((error) => {
+          console.error("❌ Error in AI Review:", error);
+        });
+    }, 1000); // Only 1 second delay
+
+    await tokenDocument.deleteOne();
+
+    res.status(200).send("Instructor application verified successfully. Your application is now being reviewed.");
+  } catch (error) {
+    console.error("Error in verifyInstructorApplication function:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 
 /**
  * @desc    Login or Register with Google
@@ -592,8 +717,9 @@ exports.registerInstructor = async (req, res) => {
       user = newUser;
     }
 
-    // Determine application status based on user's email verification
-    const applicationStatus = user.status === "verified" ? "pending" : "emailNotVerified";
+    // ALWAYS set applicationStatus to "emailNotVerified" for instructor applications
+    // User MUST click verify button in instructor verification email to trigger AI review
+    const applicationStatus = "emailNotVerified";
     
     console.log("Creating instructor profile:");
     console.log("- Email:", email);
@@ -628,35 +754,33 @@ exports.registerInstructor = async (req, res) => {
       console.log("Created new profile with ID:", profile._id, "and status:", profile.applicationStatus);
     }
     
-    // Trigger AI review if user email is already verified (status = "pending")
-    if (applicationStatus === "pending") {
-      console.log("🤖 User email already verified, triggering AI review immediately for:", profile._id);
-      
-      // Chạy ngay lập tức, chỉ đợi 1 giây để đảm bảo DB commit
-      setTimeout(() => {
-        console.log("🚀 Starting AI review for:", profile._id);
-        reviewInstructorProfile(profile._id)
-          .then((aiReviewResult) => {
-            console.log("✅ AI Review completed successfully:", aiReviewResult);
-          })
-          .catch((error) => {
-            console.error("❌ Error in AI Review:", error);
-          });
-      }, 1000); // 1 second only
-    } else {
-      console.log("ℹ️ User email not verified yet, AI review will trigger after email verification");
-    }
+    // DO NOT trigger AI review here
+    // AI review will ONLY trigger when user clicks verify button in email
+    console.log("ℹ️ Instructor application created. AI review will trigger after email verification");
 
     // Delete old verification tokens for this user
     await Token.deleteMany({ userId: user._id });
 
-    // Generate new verification token and send instructor verification email
+    // Generate new verification token
     const verificationToken = crypto.randomBytes(32).toString("hex");
     await new Token({ userId: user._id, token: verificationToken }).save();
 
-    const verificationUrl = `${process.env.CLIENT_URL}/verify-instructor-email/${verificationToken}`;
-    const htmlMessage = emailTemplates.instructorVerificationEmail(user.firstName, verificationUrl);
-    await sendEmail(user.email, "Verify Your Instructor Account - F-Learning", htmlMessage);
+    // Send different email based on user's existing email verification status
+    if (user.status === "verified") {
+      // User already has verified account - send application verification email
+      const verificationUrl = `${process.env.CLIENT_URL}/verify-instructor-application/${verificationToken}`;
+      const htmlMessage = emailTemplates.instructorApplicationVerificationEmail(user.firstName, verificationUrl);
+      await sendEmail(user.email, "Verify Your Instructor Application - F-Learning", htmlMessage);
+      
+      console.log("📧 Sent instructor application verification email to verified user:", user.email);
+    } else {
+      // New user or unverified user - send account verification email
+      const verificationUrl = `${process.env.CLIENT_URL}/verify-instructor-email/${verificationToken}`;
+      const htmlMessage = emailTemplates.instructorVerificationEmail(user.firstName, verificationUrl);
+      await sendEmail(user.email, "Verify Your Instructor Account - F-Learning", htmlMessage);
+      
+      console.log("📧 Sent instructor account verification email to new user:", user.email);
+    }
 
     res.status(201).json({
       message:

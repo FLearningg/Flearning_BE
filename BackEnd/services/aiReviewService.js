@@ -127,16 +127,29 @@ const reviewInstructorProfile = async (profileId) => {
       profile.applicationStatus = 'approved';
       profile.approvedAt = new Date();
       
-      // Cập nhật vai trò người dùng
-      await User.findByIdAndUpdate(profile.userId._id, { role: 'instructor' });
+      // Lưu profile trước khi update user role
+      await profile.save();
       
-      // Gửi email approve
-      await sendApprovalEmail(profile.userId);
+      // Cập nhật vai trò người dùng
+      const userId = profile.userId._id || profile.userId;
+      await User.findByIdAndUpdate(userId, { role: 'instructor' });
+      
+      // Gửi email approve - MUST send email
+      try {
+        const user = profile.userId;
+        if (user && user.email) {
+          await sendApprovalEmail(user);
+        } else {
+          console.error('⚠️ Cannot send approval email: User data not populated');
+        }
+      } catch (emailError) {
+        console.error('❌ Failed to send approval email:', emailError);
+      }
       
       // Log approval
       await auditLogger.logProfileApproval(
         profileId,
-        profile.userId?._id || profile.userId,
+        userId,
         finalScore
       );
       
@@ -187,8 +200,17 @@ const reviewInstructorProfile = async (profileId) => {
         
         console.log(`✅ Successfully moved profile: ${profileId}`);
         
-        // Gửi email reject
-        await sendRejectionEmail(profile.userId, decision.reason);
+        // Gửi email reject - MUST send email
+        try {
+          const user = profile.userId;
+          if (user && user.email) {
+            await sendRejectionEmail(user, decision.reason);
+          } else {
+            console.error('⚠️ Cannot send rejection email: User data not populated');
+          }
+        } catch (emailError) {
+          console.error('❌ Failed to send rejection email:', emailError);
+        }
         
         // Log rejection
         await auditLogger.logProfileRejection(

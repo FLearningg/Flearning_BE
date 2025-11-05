@@ -1,0 +1,64 @@
+{
+  "profile": {
+    "aiReviewDetails": {
+      "decision": {
+        "status": "rejected",
+        "reason": "Thiếu thông tin cá nhân quan trọng; Không có kinh nghiệm làm việc liên quan; Kỹ năng chuyên môn không đáp ứng yêu cầu; Thiếu thông tin học vấn; Tài liệu không đủ chất lượng hoặc không thể đọc được"
+      }
+    },
+    "_id": "690b80337deb60689f663bfd",
+    "userId": {
+      "learningPreferences": {
+        "surveyCompleted": false,
+        "learningObjectives": [],
+        "interestedSkills": []
+      },
+      "learningPath": {
+        "pathSummary": {
+          "skillsCovered": []
+        },
+        "regenerationCount": 0,
+        "phases": [],
+        "recommendedCourses": []
+      },
+      "_id": "690b7f927deb60689f663b39",
+      "firstName": "hehe",
+      "lastName": "nguyễn",
+      "userName": "gianglamnguyen2004_1b8a9f54",
+      "email": "gianglamnguyen2004@gmail.com",
+      "password": "$2b$12$9Gjpqmlagkc9fwT7DwoM5eRybbmInYYPhN9p066gxIzxVhtJm0yYO",
+      "role": "student",
+      "status": "verified",
+      "enrolledCourses": [],
+      "moneyLeft": {
+        "$numberDecimal": "0"
+      },
+      "createdAt": "2025-11-05T16:47:14.043Z",
+      "updatedAt": "2025-11-05T16:48:24.983Z",
+      "__v": 0
+    },
+    "phone": "0822141369",
+    "expertise": [
+      "Artificial Intelligence"
+    ],
+    "experience": "hehe",
+    "documents": [
+      "https://firebasestorage.googleapis.com/v0/b/flearning-7f88f.firebasestorage.app/o/temporary%2Finstructor-documents%2FScreenshot_2025_08_30_043817_1762361390262.png?alt=media"
+    ],
+    "applicationStatus": "rejected",
+    "totalStudents": 0,
+    "totalCourses": 0,
+    "totalReviews": 0,
+    "averageRating": 0,
+    "appliedAt": "2025-11-05T16:49:55.394Z",
+    "createdAt": "2025-11-05T16:49:55.397Z",
+    "updatedAt": "2025-11-05T16:49:55.397Z",
+    "__v": 0,
+    "aiReviewScore": 13,
+    "aiReviewStatus": "rejected",
+    "rejectedAt": "2025-11-05T16:49:57.678Z",
+    "rejectionReason": "Thiếu thông tin cá nhân quan trọng; Không có kinh nghiệm làm việc liên quan; Kỹ năng chuyên môn không đáp ứng yêu cầu; Thiếu thông tin học vấn; Tài liệu không đủ chất lượng hoặc không thể đọc được"
+  },
+  "timestamp": "2025-11-05T16:49:57.680Z",
+  "reason": "AI rejection backup"
+}
