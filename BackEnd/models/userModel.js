@@ -33,6 +33,11 @@ const UserSchema = new Schema(
       type: mongoose.Schema.Types.Decimal128,
       default: 0.0,
     },
+    payoutDetails: {
+      bankName: String,
+      accountNumber: String,
+      accountHolderName: String,
+    },
     // Learning path personalization fields
     learningPreferences: {
       // Survey completion status

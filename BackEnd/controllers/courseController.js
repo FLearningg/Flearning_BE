@@ -8,6 +8,7 @@ const section = require("../models/sectionModel");
 const Category = require("../models/categoryModel");
 const User = require("../models/userModel");
 const Enrollment = require("../models/enrollmentModel");
+const InstructorProfile = require("../models/instructorProfileModel");
 function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -84,36 +85,24 @@ const courseController = {
    */
   getTopCourses: async (req, res) => {
     try {
+      // ... (Phần code aggregation của bạn giữ nguyên) ...
       const limit = parseInt(req.query.limit) || 5;
       const categoryName = req.query.category;
-
       const matchStage = { status: "active" };
-
       if (categoryName) {
         const escapedCategoryName = escapeRegex(categoryName);
-
-        // 2. Tìm TẤT CẢ categories khớp (dùng .find() và regex)
         const matchingCategories = await Category.find({
           name: { $regex: escapedCategoryName, $options: "i" },
         });
-
         if (matchingCategories.length > 0) {
-          // 3. Lấy ID của tất cả categories tìm được
           const categoryIds = matchingCategories.map((cat) => cat._id);
-
-          // 4. Lọc các khóa học có categoryId NẰM TRONG ($in) danh sách ID này
           matchStage.categoryIds = { $in: categoryIds };
         } else {
           return res.status(200).json([]);
         }
       }
-
       const courses = await Course.aggregate([
-        {
-          $match: matchStage,
-        },
-
-        // Giai đoạn 2: "JOIN" với bảng enrollments
+        { $match: matchStage },
         {
           $lookup: {
             from: "enrollments",
@@ -123,43 +112,48 @@ const courseController = {
             as: "studentData",
           },
         },
-
-        // Giai đoạn 3: Tạo trường studentsCount
-        {
-          $addFields: {
-            studentsCount: { $size: "$studentData" },
-          },
-        },
-
-        // Giai đoạn 4 & 5: Sắp xếp và giới hạn
+        { $addFields: { studentsCount: { $size: "$studentData" } } },
         { $sort: { studentsCount: -1 } },
         { $limit: limit },
-
-        // Giai đoạn 6: Xóa mảng tạm
-        {
-          $project: {
-            studentData: 0,
-          },
-        },
+        { $project: { studentData: 0 } },
       ]);
-
-      // Phần populate vẫn giữ nguyên
       const populatedCourses = await Course.populate(courses, [
         { path: "categoryIds" },
         { path: "discountId" },
         { path: "sections" },
-        { path: "createdBy", select: "firstName lastName userImage" }, // Add instructor info
+        { path: "createdBy", select: "firstName lastName userImage" },
       ]);
-
-      // --- SỬA LỖI (2) ---
-      // Nếu không tìm thấy khóa học nào (kể cả khi category đúng),
-      // cũng trả về 200 OK với mảng rỗng.
       if (!populatedCourses || populatedCourses.length === 0) {
         return res.status(200).json([]);
-      }
+      } // --- BẮT ĐẦU SỬA LỖI ---
 
-      // Nếu mọi thứ OK và có data, trả về data
-      res.status(200).json(populatedCourses);
+      const coursesWithFullInstructor = await Promise.all(
+        populatedCourses.map(async (course) => {
+          if (course.createdBy && course.createdBy._id) {
+            const instructorProfile = await InstructorProfile.findOne({
+              userId: course.createdBy._id,
+            }).select("averageRating totalReviews");
+
+            // 1. Chuyển createdBy (Mongoose Doc) thành object thuần túy
+            const createdByObject = course.createdBy.toObject();
+
+            if (instructorProfile) {
+              // 2. Gắn profile vào object thuần túy
+              createdByObject.instructorProfile = instructorProfile;
+            } else {
+              createdByObject.instructorProfile = {
+                averageRating: 0,
+                totalReviews: 0,
+              };
+            }
+
+            // 3. Ghi đè createdBy cũ bằng object mới đã có profile
+            course.createdBy = createdByObject;
+          }
+          return course;
+        })
+      ); // --- KẾT THÚC SỬA LỖI ---
+      res.status(200).json(coursesWithFullInstructor); // Gửi mảng đã được sửa
     } catch (error) {
       console.error("Error in getTopCourses:", error);
       res.status(500).json({ message: error.message });
@@ -173,26 +167,43 @@ const courseController = {
    */
   getNewCourses: async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit) || 5; // Default to 5 if not provided
-      const courses = await Course.find({ status: "active" }) // Only fetch active courses
-        .sort({ createdAt: -1 }) // Sort by creation date desc
+      const limit = parseInt(req.query.limit) || 5;
+      const courses = await Course.find({ status: "active" })
+        .sort({ createdAt: -1 })
         .limit(limit)
         .populate("categoryIds")
         .populate("discountId")
         .populate("sections")
-        .populate("createdBy", "firstName lastName userImage"); // Populate instructor info
+        .populate("createdBy", "firstName lastName userImage"); // 1. Populate cơ bản
+
       if (!courses || courses.length === 0) {
         return res.status(404).json({ message: "Not found new courses" });
-      }
+      } // 2. Dùng Promise.all để thêm CẢ studentsCount VÀ instructorProfile
 
-      // Get enrollment count for each course
-      const coursesWithEnrollmentCount = await Promise.all(
+      const finalCourses = await Promise.all(
         courses.map(async (course) => {
+          // Lấy số lượng học viên
           const enrollmentCount = await Enrollment.countDocuments({
             courseId: course._id,
             status: "enrolled",
-          });
-          const courseObj = course.toObject();
+          }); // Chuyển sang object thuần túy
+
+          const courseObj = course.toObject(); // --- BẮT ĐẦU SỬA LỖI --- // Lấy instructorProfile (giống hệt logic của getTopCourses)
+
+          if (courseObj.createdBy && courseObj.createdBy._id) {
+            const instructorProfile = await InstructorProfile.findOne({
+              userId: courseObj.createdBy._id,
+            }).select("averageRating totalReviews");
+
+            if (instructorProfile) {
+              courseObj.createdBy.instructorProfile = instructorProfile;
+            } else {
+              courseObj.createdBy.instructorProfile = {
+                averageRating: 0,
+                totalReviews: 0,
+              };
+            }
+          } // --- KẾT THÚC SỬA LỖI --- // Trả về object đã được thêm 2 trường
           return {
             ...courseObj,
             studentsCount: enrollmentCount,
@@ -200,7 +211,7 @@ const courseController = {
         })
       );
 
-      res.status(200).json(coursesWithEnrollmentCount);
+      res.status(200).json(finalCourses); // Trả về mảng đã sửa
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
