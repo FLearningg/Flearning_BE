@@ -141,6 +141,51 @@ exports.instructorVerificationEmail = (firstName, verificationUrl) => {
 };
 
 /**
+ * Instructor application verification email (for users with verified account)
+ */
+exports.instructorApplicationVerificationEmail = (firstName, verificationUrl) => {
+  const content = `
+    ${emailHeader("Verify Your Instructor Application")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        Thank you for applying to become an instructor on F-Learning! We're excited to review your application.
+      </p>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        <strong>Please verify your instructor application by clicking the button below:</strong>
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button(verificationUrl, "Verify Application")}
+      </div>
+      <div style="background-color: #e6f7ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">📋 What Happens Next?</h3>
+        <ol style="color: #595959; font-size: 15px; line-height: 1.8; margin: 0; padding-left: 20px;">
+          <li><strong>Verify your application</strong> (click the button above)</li>
+          <li><strong>AI Review</strong> - Our AI will automatically review your application</li>
+          <li><strong>Get notified</strong> - You'll receive an email with the result immediately</li>
+          <li><strong>Start teaching</strong> - If approved, you can start creating courses right away!</li>
+        </ol>
+      </div>
+      <div style="background-color: ${F_LEARNING_LIGHT}; padding: 16px; border-radius: 8px; border-left: 4px solid ${F_LEARNING_ORANGE};">
+        <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
+          <strong>Important:</strong> After verification, your application will be automatically reviewed by our AI system. 
+          You will receive an approval or review notification within minutes.
+        </p>
+      </div>
+      <p style="color: #595959; font-size: 14px; margin-top: 30px;">
+        If the button doesn't work, copy and paste this link into your browser:
+      </p>
+      <p style="color: ${F_LEARNING_ORANGE}; font-size: 13px; word-break: break-all;">
+        ${verificationUrl}
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
+
+/**
  * Instructor application received confirmation
  */
 exports.instructorApplicationReceivedEmail = (
@@ -382,6 +427,10 @@ exports.userBannedEmail = (firstName) => {
     </div>
     ${emailFooter()}
   `;
+
+  return emailWrapper(content);
+};
+
 exports.userCompletedCourseEmail = (
   userName,
   courseName,
@@ -413,4 +462,3 @@ ${emailFooter()}
 
   return emailWrapper(content);
 };
-}

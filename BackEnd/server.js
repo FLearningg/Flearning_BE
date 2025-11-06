@@ -20,7 +20,6 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
-const withdrawRoutes = require("./routes/withdrawalRoutes");
 const {
   adminRouter: discountAdminRouter,
   instructorRouter: discountInstructorRouter,
@@ -37,6 +36,7 @@ const aiRoutes = require("./routes/aiRoutes");
 const recommendationRoutes = require("./routes/recommendationRoutes");
 const proctoringRoutes = require("./routes/proctoringRoutes");
 const surveyRoutes = require("./routes/surveyRoutes");
+const { startAutoReviewService } = require("./services/autoAIReviewService");
 
 const app = express();
 
@@ -212,8 +212,6 @@ app.use("/api/proctoring", proctoringRoutes);
 app.use("/api/recommendations", recommendationRoutes);
 // Survey routes
 app.use("/api/survey", surveyRoutes);
-// Withdrawal routes
-app.use("/api/withdrawals", withdrawRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 
@@ -229,6 +227,10 @@ mongoose
   })
   .then(() => {
     console.log("✅ [SERVER] Connected to MongoDB successfully");
+    
+    // Khởi động auto AI review service
+    startAutoReviewService(30); // Check mỗi 30 phút
+    
     const PORT = process.env.PORT || 5000;
     // Use server.listen instead of app.listen for Socket.IO
     server.listen(PORT, () => {

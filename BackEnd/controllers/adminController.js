@@ -16,6 +16,7 @@ const {
   userBannedEmail,
 } = require("../utils/emailTemplates");
 const sendEmail = require("../utils/sendEmail");
+const { reviewInstructorProfile } = require("../services/aiReviewService");
 /**
  * Helper function to extract file name from URL
  * @param {string} url - Firebase storage URL or any URL
@@ -3245,5 +3246,103 @@ exports.denyInstructorRequest = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Trigger AI review cho một hoặc tất cả pending applications
+ * @route   POST /api/admin/trigger-ai-review
+ * @access  Private/Admin
+ */
+exports.triggerAIReview = async (req, res) => {
+  try {
+    const { applicationId } = req.body;
+
+    if (applicationId) {
+      // Review một application cụ thể
+      console.log(`🤖 Admin triggering AI review for application: ${applicationId}`);
+      
+      const profile = await InstructorProfile.findById(applicationId);
+      if (!profile) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Instructor profile not found." 
+        });
+      }
+
+      if (profile.applicationStatus !== 'pending') {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Profile is not in pending status. Current status: ${profile.applicationStatus}` 
+        });
+      }
+
+      const aiReviewResult = await reviewInstructorProfile(applicationId);
+      
+      return res.status(200).json({
+        success: true,
+        message: "AI review triggered successfully for the application.",
+        data: aiReviewResult
+      });
+    } else {
+      // Review tất cả pending applications
+      console.log(`🤖 Admin triggering AI review for ALL pending applications`);
+      
+      const pendingProfiles = await InstructorProfile.find({ 
+        applicationStatus: 'pending' 
+      });
+
+      if (pendingProfiles.length === 0) {
+        return res.status(200).json({ 
+          success: true, 
+          message: "No pending applications to review.",
+          data: { processed: 0, results: [] }
+        });
+      }
+
+      console.log(`📋 Found ${pendingProfiles.length} pending applications to review`);
+
+      const results = [];
+      for (const profile of pendingProfiles) {
+        try {
+          console.log(`🔄 Processing application: ${profile._id}`);
+          const aiReviewResult = await reviewInstructorProfile(profile._id);
+          results.push({
+            applicationId: profile._id,
+            success: aiReviewResult.success,
+            result: aiReviewResult
+          });
+        } catch (error) {
+          console.error(`❌ Error reviewing application ${profile._id}:`, error);
+          results.push({
+            applicationId: profile._id,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      return res.status(200).json({
+        success: true,
+        message: `AI review completed. Success: ${successCount}, Failed: ${failCount}`,
+        data: {
+          total: pendingProfiles.length,
+          processed: results.length,
+          successCount,
+          failCount,
+          results
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Error triggering AI review:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: error.message 
+    });
   }
 };

@@ -310,10 +310,25 @@ const extractEducation = (text) => {
  */
 const analyzeCV = async (documentUrls) => {
   try {
+    // Nếu không có documents, trả về kết quả với điểm thấp thay vì error
     if (!documentUrls || documentUrls.length === 0) {
+      console.log('⚠️ No documents provided - returning low score result');
       return {
-        success: false,
-        error: 'No documents provided'
+        success: true,
+        data: {
+          personalInfo: {},
+          experience: [],
+          skills: [],
+          education: [],
+          documents: [],
+          overallScore: 0, // Điểm 0 vì không có documents
+          recommendations: [
+            'Không có tài liệu CV được cung cấp',
+            'Cần bổ sung CV/Resume để đánh giá chính xác',
+            'Thiếu thông tin về kinh nghiệm và kỹ năng'
+          ],
+          hasNoDocuments: true
+        }
       };
     }
 
@@ -324,7 +339,8 @@ const analyzeCV = async (documentUrls) => {
       education: [],
       documents: [],
       overallScore: 0,
-      recommendations: []
+      recommendations: [],
+      hasNoDocuments: false
     };
 
     // Phân tích từng tài liệu
