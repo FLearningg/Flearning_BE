@@ -1,4 +1,5 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const https = require('https');
+const http = require('http');
 const mongoose = require('mongoose');
 
 // Import các model cần thiết để truy vấn (đúng tên file)
@@ -17,17 +18,69 @@ const ProctoringSession = require("../models/proctoringSessionModel");
 const Lesson = require("../models/lessonModel");
 const Section = require("../models/sectionModel");
 
-// Khởi tạo Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash-exp",
-    generationConfig: {
-        temperature: 0.7,
-        topP: 0.95,
-        topK: 40,
-        maxOutputTokens: 8192,
-    }
-});
+// OpenRouter Configuration
+const openRouterApiKey = process.env.QUIZAI_API_KEY;
+const openRouterBaseUrl = process.env.QUIZAI_BASE_URL;
+const openRouterModel = process.env.QUIZAI_MODEL || 'gemini-2.5-flash';
+
+// Helper function to call OpenRouter API
+async function callOpenRouter(messages) {
+    return new Promise((resolve, reject) => {
+        const postData = JSON.stringify({
+            model: openRouterModel,
+            messages: messages,
+            max_tokens: 8192,
+            temperature: 0.7,
+            top_p: 0.95,
+            top_k: 40
+        });
+
+        const url = new URL(openRouterBaseUrl);
+        const options = {
+            hostname: url.hostname,
+            port: url.port || 443,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${openRouterApiKey}`,
+                'Content-Length': Buffer.byteLength(postData),
+                'HTTP-Referer': 'https://flearning.com',
+                'X-Title': 'F-Learning Chatbot',
+                'User-Agent': 'F-Learning-Backend/1.0'
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    reject(new Error(`OpenRouter API Error: ${res.statusCode} - ${data}`));
+                    return;
+                }
+
+                try {
+                    const response = JSON.parse(data);
+                    resolve(response.choices[0].message.content);
+                } catch (error) {
+                    reject(new Error(`Failed to parse OpenRouter response: ${error.message}`));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(new Error(`Request error: ${error.message}`));
+        });
+
+        req.write(postData);
+        req.end();
+    });
+}
 
 // --- CẬP NHẬT SONG NGỮ ---
 // Mô tả Schema cho Gemini hiểu (Mô tả song ngữ)
@@ -197,10 +250,19 @@ exports.handleQuery = async (req, res) => {
             return res.status(400).json({ error: "Prompt is required" });
         }
 
-        const fullPromptForAnalysis = `${systemPrompt}\n\n${schemaDescription}\n\nUser Question: "${userPrompt}"`;
+        const messages = [
+            {
+                role: "system",
+                content: `${systemPrompt}\n\n${schemaDescription}`
+            },
+            {
+                role: "user",
+                content: `User Question: "${userPrompt}"`
+            }
+        ];
 
-        let analysisResult = await model.generateContent(fullPromptForAnalysis);
-        let analysisText = analysisResult.response.text().trim();
+        let analysisResult = await callOpenRouter(messages);
+        let analysisText = analysisResult.trim();
 
         // Log the AI response for debugging
         console.log("AI Response:", analysisText);
@@ -372,8 +434,19 @@ exports.handleQuery = async (req, res) => {
             Your Response (in the original language, with Markdown links for courses):
         `;
 
-        const summaryResult = await model.generateContent(promptForSummary);
-        const finalReply = summaryResult.response.text();
+        const summaryMessages = [
+            {
+                role: "system",
+                content: `You are F-Learning Assistant. Based on the user's original question and the data retrieved, formulate a friendly and natural-sounding response in the same language as the original question. If your response includes course titles, format them as Markdown links: [Course Title](${clientUrl}/course/COURSE_ID)`
+            },
+            {
+                role: "user",
+                content: promptForSummary
+            }
+        ];
+
+        const summaryResult = await callOpenRouter(summaryMessages);
+        const finalReply = summaryResult;
 
         return res.json({ reply: finalReply });
 
