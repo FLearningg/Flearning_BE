@@ -75,6 +75,13 @@ async function generateQuizQuestions(params) {
     // Parse JSON response
     const questions = parseQuizResponse(content);
 
+    // Shuffle answers for each multiple-choice question to randomize correct answer position
+    questions.forEach(q => {
+      if (q.type === 'multiple-choice' && q.answers && q.answers.length > 0) {
+        q.answers = shuffleArray(q.answers);
+      }
+    });
+
     return questions;
 
   } catch (error) {
@@ -195,8 +202,8 @@ REQUIREMENTS:
       "score": 10,
       "answers": [
         {"content": "Answer option 1", "isCorrect": false},
-        {"content": "Answer option 2", "isCorrect": true},
-        {"content": "Answer option 3", "isCorrect": false},
+        {"content": "Answer option 2", "isCorrect": false},
+        {"content": "Answer option 3", "isCorrect": true},
         {"content": "Answer option 4", "isCorrect": false}
       ]
     }
@@ -211,6 +218,9 @@ ${formatExample}
 IMPORTANT:
 - Generate exactly ${numberOfQuestions} questions
 - Each question must have exactly ONE correct answer
+- RANDOMIZE the position of correct answers - DO NOT always put the correct answer in the same position
+- Distribute correct answers across all positions (A, B, C, D) randomly
+- Make incorrect options plausible and related to the topic
 - All questions must be in the same language as the lesson content
 - Return ONLY the JSON, nothing else`;
 
@@ -440,8 +450,22 @@ function parseEssayGradingResponse(content, maxScore) {
   } catch (error) {
     console.error('Failed to parse essay grading response:', error.message);
     console.error('Raw content:', content);
-    throw new Error(`Failed to parse AI grading response: ${error.message}`);
+    throw new Error(`Failed to parse grading response: ${error.message}`);
   }
+}
+
+/**
+ * Shuffle array using Fisher-Yates algorithm
+ * @param {Array} array - Array to shuffle
+ * @returns {Array} Shuffled array
+ */
+function shuffleArray(array) {
+  const shuffled = [...array]; // Create a copy
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 module.exports = {

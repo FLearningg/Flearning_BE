@@ -5,7 +5,14 @@ const { generateQuizQuestions, gradeEssayAnswer } = require("../services/openRou
 const NodeCache = require("node-cache");
 const crypto = require("crypto");
 const StudentQuizResult = require("../models/StudentQuizResult");
+const axios = require("axios");
 
+// OpenRouter configuration for Quiz AI (explain quiz)
+const QUIZAI_API_KEY = process.env.QUIZAI_API_KEY;
+const QUIZAI_BASE_URL = process.env.QUIZAI_BASE_URL || 'https://ai.121628.xyz/v1/chat/completions';
+const QUIZAI_MODEL = process.env.QUIZAI_MODEL || 'gemini-2.0-flash';
+
+// Legacy Gemini config (for backward compatibility if needed)
 const MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
@@ -97,7 +104,7 @@ exports.explainQuiz = async (req, res) => {
     const responseData = {
       explanations,
       meta: {
-        model: MODEL,
+        model: QUIZAI_MODEL,
         questionsCount: questionDetails.length,
         generatedAt: new Date().toISOString(),
       },
@@ -247,15 +254,11 @@ Important: Return ONLY valid JSON, no markdown, no code blocks, no extra text ou
 }
 
 /**
- * Call Gemini API to generate explanations
+ * Call OpenRouter API to generate explanations
  */
 async function generateExplanationsFromAI(prompt, questionDetails) {
   try {
-    const requestBody = {
-      systemInstruction: {
-        parts: [
-          {
-            text: `You are an expert educational tutor. Your role is to provide thorough, encouraging, and understandable explanations for quiz questions to help students learn.
+    const systemPrompt = `You are an expert educational tutor. Your role is to provide thorough, encouraging, and understandable explanations for quiz questions to help students learn.
 
 For each question:
 1. If the student's answer is CORRECT:
@@ -279,133 +282,56 @@ For each question:
    - Make explanations engaging and relatable
    - Be positive and constructive
 
-CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array. Keep explanations short (max 50 words each).`,
+CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array. Keep explanations short (max 50 words each).`;
+
+    const response = await axios.post(
+      QUIZAI_BASE_URL,
+      {
+        model: QUIZAI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
           },
+          {
+            role: 'user',
+            content: prompt
+          }
         ],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: prompt,
-            },
-          ],
-        },
-      ],
-      generationConfig: {
         temperature: 0.3,
-        topP: 0.8,
-        maxOutputTokens: 16384, // Increased for longer responses
-        responseMimeType: "application/json",
+        max_tokens: 16000,
+        response_format: { type: "json_object" }
       },
-    };
+      {
+        headers: {
+          'Authorization': `Bearer ${QUIZAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-
-    const response = await fetch(GEMINI_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Gemini API error: ${response.status} - ${errorBody}`);
-    }
-
-    const result = await response.json();
-
-    // Extract and parse the AI response
-    const explanations = parseAIResponse(result, questionDetails);
-
-    return explanations;
-  } catch (error) {
-    console.error("🚨 generateExplanationsFromAI error:", error);
-    console.error("🚨 Error details:", {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
-    });
-    throw error;
-  }
-}
-
-/**
- * Parse and validate the AI response
- */
-function parseAIResponse(response, questionDetails) {
-  try {
-    // Extract text from response
-    if (
-      !response.candidates ||
-      !response.candidates[0]?.content?.parts[0]?.text
-    ) {
-      console.error("🚨 Invalid Gemini response structure:", JSON.stringify(response, null, 2));
-      return createFallbackExplanations(questionDetails);
-    }
-
-    const responseText = response.candidates[0].content.parts[0].text;
+    // Extract content from OpenRouter response
+    const content = response.data.choices[0].message.content;
 
     // Parse JSON response
     let parsedResponse;
     try {
-      parsedResponse = JSON.parse(responseText);
+      // OpenRouter might return the array directly or wrapped in an object
+      const parsed = JSON.parse(content);
+      parsedResponse = Array.isArray(parsed) ? parsed : (parsed.explanations || parsed.questions || []);
     } catch (parseError) {
-      console.error("🚨 Failed to parse AI response as JSON:", parseError);
-      console.error("🚨 Raw response text length:", responseText.length);
-      
-      // Try to fix truncated JSON
-      let fixedJson = responseText;
-      
-      // If JSON is truncated, try to close it properly
-      if (parseError.message.includes("Unterminated string") || parseError.message.includes("Unexpected end")) {
-        
-        // Find the last complete object
-        const lastCompleteObjectMatch = fixedJson.match(/.*}(?=\s*,?\s*\{)/g);
-        if (lastCompleteObjectMatch) {
-          const lastCompleteIndex = fixedJson.lastIndexOf(lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1]) + lastCompleteObjectMatch[lastCompleteObjectMatch.length - 1].length;
-          fixedJson = fixedJson.substring(0, lastCompleteIndex) + "\n]";
-        } else {
-          // Try to close the current object and array
-          fixedJson = fixedJson.replace(/,?\s*$/, '') + '"}]';
-        }
-      }
-      
-      try {
-        parsedResponse = JSON.parse(fixedJson);
-      } catch (fixError) {
-        console.error("🚨 Failed to parse fixed JSON:", fixError);
-        // Try to extract JSON array from the response
-        const jsonMatch = responseText.match(/\[[\s\S]*?\}(?=\s*,?\s*\{|\s*\])/g);
-        if (jsonMatch && jsonMatch.length > 0) {
-          const validObjects = [];
-          for (const match of jsonMatch) {
-            try {
-              const obj = JSON.parse(match + '}');
-              validObjects.push(obj);
-            } catch (e) {
-              // Skip invalid objects
-            }
-          }
-          if (validObjects.length > 0) {
-            parsedResponse = validObjects;
-          } else {
-            throw new Error("Could not extract valid JSON from AI response");
-          }
-        } else {
-          throw new Error("Could not extract valid JSON from AI response");
-        }
-      }
+      console.error("🚨 Failed to parse OpenRouter response as JSON:", parseError);
+      console.error("🚨 Raw response:", content);
+      return createFallbackExplanations(questionDetails);
     }
 
     // Validate and format response
     if (!Array.isArray(parsedResponse)) {
-      throw new Error("AI response is not a JSON array");
+      console.error("🚨 OpenRouter response is not a JSON array");
+      return createFallbackExplanations(questionDetails);
     }
 
-    // Map AI response to expected format - handle both frontend and database formats
+    // Map AI response to expected format
     const explanations = parsedResponse.map((item, index) => {
       const questionDetail = questionDetails[index];
       
@@ -437,7 +363,7 @@ function parseAIResponse(response, questionDetails) {
 
       return {
         questionIndex: questionDetail?.questionIndex ?? index,
-        originalIndex: questionDetail?.originalIndex, // Include originalIndex for reference
+        originalIndex: questionDetail?.originalIndex,
         questionId: questionDetail?.questionId || item.questionId,
         questionText: questionText,
         isCorrect: isCorrect,
@@ -449,12 +375,14 @@ function parseAIResponse(response, questionDetails) {
 
     return explanations;
   } catch (error) {
-    console.error("🚨 parseAIResponse error:", error);
+    console.error("🚨 generateExplanationsFromAI error:", error);
     console.error("🚨 Error details:", {
       message: error.message,
       stack: error.stack,
       name: error.name
     });
+    
+    // Fallback to create basic explanations
     return createFallbackExplanations(questionDetails);
   }
 }
