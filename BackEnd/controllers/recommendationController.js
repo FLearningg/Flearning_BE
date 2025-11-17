@@ -1,17 +1,24 @@
 require("dotenv").config();
 
 const mongoose = require("mongoose");
+const axios = require("axios");
 const User = require("../models/userModel");
 const Course = require("../models/courseModel");
 const Enrollment = require("../models/enrollmentModel");
-const {
-  callGeminiAPI,
-  parseGeminiJSON,
-  extractTextFromResponse,
-  buildGeminiRequestBody,
-  GeminiAPIError,
-  MODEL,
-} = require("../utils/geminiApiHelper");
+
+// OpenRouter configuration (Priority 1 - same as chatbox AI)
+const OPENROUTER_API_KEY = process.env.QUIZAI_API_KEY;
+const OPENROUTER_BASE_URL = process.env.QUIZAI_BASE_URL || 'https://ai.121628.xyz/v1/chat/completions';
+const OPENROUTER_MODEL = process.env.QUIZAI_MODEL || 'gemini-2.0-flash';
+
+// Gemini Direct API configuration (Priority 2 - fallback)
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+// Use dynamic import for node-fetch (for Gemini direct API)
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 /**
  * POST /api/recommendations/generate
@@ -289,7 +296,7 @@ async function generateRecommendations(user, courses) {
       skill._id ? skill._id.toString() : skill.toString()
     );
 
-    filteredCourses = filteredCourses.filter((course) => {
+    const skillFilteredCourses = filteredCourses.filter((course) => {
       const courseCategoryIds = course.categoryIds.map((cat) =>
         cat._id ? cat._id.toString() : cat.toString()
       );
@@ -297,17 +304,48 @@ async function generateRecommendations(user, courses) {
         interestedSkillIds.includes(catId)
       );
     });
+
+    // Only use skill-filtered courses if we found some
+    if (skillFilteredCourses.length > 0) {
+      filteredCourses = skillFilteredCourses;
+    } else {
+      // Fallback: Try to match interested skills across ALL suitable levels (not just current level)
+      console.log(
+        "📊 No courses found matching both level and skills. Expanding level search..."
+      );
+
+      // Get all courses matching interested skills, regardless of level
+      const allLevelSkillMatches = courses.filter((course) => {
+        const courseCategoryIds = course.categoryIds.map((cat) =>
+          cat._id ? cat._id.toString() : cat.toString()
+        );
+        return courseCategoryIds.some((catId) =>
+          interestedSkillIds.includes(catId)
+        );
+      });
+
+      // Then filter by appropriate levels (expand to include next level)
+      const expandedLevelFilter = filterCoursesByLevel(
+        allLevelSkillMatches,
+        preferences.currentLevel,
+        true // expandLevels = true for fallback
+      );
+
+      if (expandedLevelFilter.length > 0) {
+        filteredCourses = expandedLevelFilter;
+        console.log(
+          "📊 Found courses after expanding level range:",
+          filteredCourses.length
+        );
+      }
+      // else: keep original level-filtered courses (still better than no courses)
+    }
   }
 
   console.log(
-    "📊 Filtered courses by level and skills:",
+    "📊 Final filtered courses by level and skills:",
     filteredCourses.length
   );
-
-  if (filteredCourses.length === 0) {
-    // Fallback: Return courses matching only the level
-    filteredCourses = filterCoursesByLevel(courses, preferences.currentLevel);
-  }
 
   // Step 3: Calculate match scores for each course
   const coursesWithScores = filteredCourses.map((course) => ({
@@ -350,8 +388,11 @@ async function generateRecommendations(user, courses) {
 
 /**
  * Filter courses by user's current level
+ * @param {Array} courses - Array of courses to filter
+ * @param {string} currentLevel - User's current level (beginner, intermediate, advanced, expert)
+ * @param {boolean} expandLevels - If true, include next level for fallback (default: false)
  */
-function filterCoursesByLevel(courses, currentLevel) {
+function filterCoursesByLevel(courses, currentLevel, expandLevels = false) {
   const levelHierarchy = {
     beginner: ["beginner"],
     intermediate: ["beginner", "intermediate"],
@@ -359,7 +400,16 @@ function filterCoursesByLevel(courses, currentLevel) {
     expert: ["advanced"],
   };
 
-  const allowedLevels = levelHierarchy[currentLevel] || ["beginner"];
+  // Expanded hierarchy for fallback scenarios (include more levels to find relevant courses)
+  const expandedLevelHierarchy = {
+    beginner: ["beginner", "intermediate"], // Allow intermediate for beginners if needed
+    intermediate: ["beginner", "intermediate", "advanced"], // More flexibility
+    advanced: ["intermediate", "advanced"],
+    expert: ["advanced", "expert"],
+  };
+
+  const hierarchy = expandLevels ? expandedLevelHierarchy : levelHierarchy;
+  const allowedLevels = hierarchy[currentLevel] || ["beginner"];
 
   return courses.filter((course) => allowedLevels.includes(course.level));
 }
@@ -456,13 +506,110 @@ function parseDuration(durationString) {
 }
 
 /**
- * Generate AI-powered reasons for each recommendation using Gemini API
+ * Helper: Call AI API with 3-layer fallback strategy
+ * Layer 1: Gemini Direct API (priority - cách cũ)
+ * Layer 2: OpenRouter API (fallback)
+ * Layer 3: Manual fallback (last resort)
+ */
+async function callAIWithFallback(systemInstruction, userPrompt, config = {}) {
+  const { temperature = 0.5, maxTokens = 8192 } = config;
+
+  // Layer 1: Try Gemini Direct API first
+  try {
+    console.log("🤖 [Layer 1] Trying Gemini Direct API...");
+
+    const requestBody = {
+      systemInstruction: {
+        parts: [{ text: systemInstruction }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userPrompt }]
+        }
+      ],
+      generationConfig: {
+        temperature: temperature,
+        topP: 0.9,
+        maxOutputTokens: maxTokens,
+        responseMimeType: "application/json"
+      }
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    const geminiResponse = await fetch(GEMINI_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!geminiResponse.ok) {
+      throw new Error(`Gemini API error: ${geminiResponse.status}`);
+    }
+
+    const result = await geminiResponse.json();
+
+    if (!result.candidates || !result.candidates[0]?.content?.parts[0]?.text) {
+      throw new Error("Invalid Gemini response structure");
+    }
+
+    const content = result.candidates[0].content.parts[0].text;
+    console.log("✅ [Layer 1] Gemini Direct API succeeded");
+    return { success: true, content, source: 'gemini' };
+
+  } catch (geminiError) {
+    console.warn("⚠️ [Layer 1] Gemini Direct API failed:", geminiError.message);
+
+    // Layer 2: Try OpenRouter API
+    try {
+      console.log("🤖 [Layer 2] Trying OpenRouter API...");
+
+      const response = await axios.post(
+        OPENROUTER_BASE_URL,
+        {
+          model: OPENROUTER_MODEL,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: temperature,
+          max_tokens: maxTokens,
+          response_format: { type: "json_object" }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      const content = response.data.choices[0].message.content;
+      console.log("✅ [Layer 2] OpenRouter API succeeded");
+      return { success: true, content, source: 'openrouter' };
+
+    } catch (openrouterError) {
+      console.warn("⚠️ [Layer 2] OpenRouter API failed:", openrouterError.message);
+      console.warn("⚠️ [Layer 3] Will use manual fallback");
+      return { success: false, error: openrouterError.message, source: 'none' };
+    }
+  }
+}
+
+/**
+ * Generate AI-powered reasons for each recommendation
+ * Uses 3-layer fallback: Gemini Direct -> OpenRouter -> Manual
  */
 async function generateAIReasons(topCourses, preferences, user) {
-  try {
-    const prompt = buildRecommendationPrompt(topCourses, preferences, user);
+  const prompt = buildRecommendationPrompt(topCourses, preferences, user);
 
-    const systemInstruction = `You are an expert educational advisor. Your role is to explain why specific courses are recommended for a student based on their learning goals, current level, and interests.
+  const systemInstruction = `You are an expert educational advisor. Your role is to explain why specific courses are recommended for a student based on their learning goals, current level, and interests.
 
 For each course, provide:
 1. A clear, personalized reason (1-2 sentences) explaining why this course is suitable
@@ -472,51 +619,32 @@ For each course, provide:
 
 CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array. Each reason should be concise (max 100 characters).`;
 
-    const requestBody = buildGeminiRequestBody({
-      systemInstruction,
-      userPrompt: prompt,
-      generationConfig: {
-        temperature: 0.5,
-        topP: 0.9,
-        maxOutputTokens: 8192,
-        responseMimeType: "application/json",
-      },
-    });
+  const aiResult = await callAIWithFallback(systemInstruction, prompt, {
+    temperature: 0.5,
+    maxTokens: 8192
+  });
 
-    // Call Gemini API with retry mechanism
-    const result = await callGeminiAPI(requestBody, {
-      maxRetries: 3,
-      baseDelay: 1000,
-      timeout: 30000,
-    });
+  // If AI succeeded (Layer 1 or 2)
+  if (aiResult.success) {
+    try {
+      const parsed = JSON.parse(aiResult.content);
+      const parsedResponse = Array.isArray(parsed) ? parsed : (parsed.recommendations || parsed.courses || []);
 
-    // Extract and parse response
-    const responseText = extractTextFromResponse(result);
-    const parsedResponse = parseGeminiJSON(responseText);
-
-    if (!Array.isArray(parsedResponse)) {
-      throw new Error("AI response is not a JSON array");
+      if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
+        console.log(`✅ Using AI reasons from ${aiResult.source}`);
+        return topCourses.map((item, index) => ({
+          ...item,
+          reason: parsedResponse[index]?.reason || createFallbackReason(item.course, preferences)
+        }));
+      }
+    } catch (parseError) {
+      console.error("🚨 Failed to parse AI response:", parseError.message);
     }
-
-    // Merge AI reasons with course data
-    return topCourses.map((item, index) => ({
-      ...item,
-      reason:
-        parsedResponse[index]?.reason ||
-        createFallbackReason(item.course, preferences),
-    }));
-  } catch (error) {
-    // Log the error with appropriate context
-    if (error instanceof GeminiAPIError) {
-      console.error("🚨 Gemini API Error:", error.toJSON());
-    } else {
-      console.error("🚨 generateAIReasons error:", error.message);
-    }
-
-    // Always use fallback on any error
-    console.warn("⚠️ Using fallback reasons due to error");
-    return createFallbackReasons(topCourses, preferences);
   }
+
+  // Layer 3: Manual fallback
+  console.warn("⚠️ [Layer 3] Using manual fallback reasons");
+  return createFallbackReasons(topCourses, preferences);
 }
 
 /**
@@ -570,12 +698,12 @@ Quan trọng: Chỉ trả về JSON array, không có markdown, không có code 
 
 /**
  * Generate AI-powered phase rationales for all phases
+ * Uses 3-layer fallback: Gemini Direct -> OpenRouter -> Manual
  */
 async function generatePhaseRationales(phases, preferences, user) {
-  try {
-    const prompt = buildPhaseRationalePrompt(phases, preferences, user);
+  const prompt = buildPhaseRationalePrompt(phases, preferences, user);
 
-    const systemInstruction = `You are an expert educational advisor. Your role is to create meaningful phase titles, explain WHY each learning phase is suitable for a student, and recommend realistic TIME DURATION based on their learning goals, current level, weekly study commitment, and the phase's content.
+  const systemInstruction = `You are an expert educational advisor. Your role is to create meaningful phase titles, explain WHY each learning phase is suitable for a student, and recommend realistic TIME DURATION based on their learning goals, current level, weekly study commitment, and the phase's content.
 
 For each phase, provide:
 1. A descriptive, engaging TITLE (4-6 words in Vietnamese) that captures the essence of this learning stage
@@ -609,102 +737,87 @@ Time Duration guidelines:
 CRITICAL: You MUST return ONLY a valid JSON array. No markdown formatting. No code blocks. No text outside the JSON array.
 Response format: [{"title": "...", "rationale": "...", "estimatedWeeks": 4}, ...]`;
 
-    const requestBody = buildGeminiRequestBody({
-      systemInstruction,
-      userPrompt: prompt,
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.9,
-        maxOutputTokens: 4096,
-        responseMimeType: "application/json",
-      },
-    });
+  const aiResult = await callAIWithFallback(systemInstruction, prompt, {
+    temperature: 0.7,
+    maxTokens: 4096
+  });
 
-    // Call Gemini API with retry mechanism
-    const result = await callGeminiAPI(requestBody, {
-      maxRetries: 3,
-      baseDelay: 1000,
-      timeout: 30000,
-    });
+  // If AI succeeded (Layer 1 or 2)
+  if (aiResult.success) {
+    try {
+      const parsed = JSON.parse(aiResult.content);
+      const parsedResponse = Array.isArray(parsed) ? parsed : (parsed.phases || parsed.rationales || []);
 
-    // Extract and parse response
-    const responseText = extractTextFromResponse(result);
-    const parsedResponse = parseGeminiJSON(responseText);
+      if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
+        console.log(`✅ Using AI phase rationales from ${aiResult.source}`);
 
-    if (!Array.isArray(parsedResponse)) {
-      throw new Error("AI response is not a JSON array");
+        // Merge AI titles, rationales, and time estimates with phase data
+        return phases.map((phase, index) => {
+          const aiData = parsedResponse[index] || {};
+          const tempInfo = phase._tempPhaseInfo;
+
+          // Remove temporary info
+          const { _tempPhaseInfo, ...cleanPhase } = phase;
+
+          // Use AI-provided weeks or fallback to calculated value
+          const estimatedWeeks =
+            aiData.estimatedWeeks ||
+            cleanPhase.estimatedWeeks ||
+            calculateWeeksForPhase(
+              cleanPhase.totalHours,
+              preferences.weeklyStudyHours
+            );
+
+          return {
+            ...cleanPhase,
+            title: aiData.title || createFallbackPhaseTitle(tempInfo, preferences),
+            phaseRationale:
+              aiData.rationale ||
+              createFallbackPhaseRationale(
+                phase,
+                index,
+                phases.length,
+                preferences
+              ),
+            estimatedWeeks: Math.max(1, Math.ceil(estimatedWeeks)),
+            estimatedDays: Math.ceil(estimatedWeeks * 7),
+            estimatedTime: formatEstimatedTime(estimatedWeeks),
+          };
+        });
+      }
+    } catch (parseError) {
+      console.error("🚨 Failed to parse AI response:", parseError.message);
     }
-
-    // Merge AI titles, rationales, and time estimates with phase data
-    return phases.map((phase, index) => {
-      const aiData = parsedResponse[index] || {};
-      const tempInfo = phase._tempPhaseInfo;
-
-      // Remove temporary info
-      const { _tempPhaseInfo, ...cleanPhase } = phase;
-
-      // Use AI-provided weeks or fallback to calculated value
-      const estimatedWeeks =
-        aiData.estimatedWeeks ||
-        cleanPhase.estimatedWeeks ||
-        calculateWeeksForPhase(
-          cleanPhase.totalHours,
-          preferences.weeklyStudyHours
-        );
-
-      return {
-        ...cleanPhase,
-        title: aiData.title || createFallbackPhaseTitle(tempInfo, preferences),
-        phaseRationale:
-          aiData.rationale ||
-          createFallbackPhaseRationale(
-            phase,
-            index,
-            phases.length,
-            preferences
-          ),
-        estimatedWeeks: Math.max(1, Math.ceil(estimatedWeeks)), // Ensure at least 1 week
-        estimatedDays: Math.ceil(estimatedWeeks * 7),
-        estimatedTime: formatEstimatedTime(estimatedWeeks),
-      };
-    });
-  } catch (error) {
-    // Log the error with appropriate context
-    if (error instanceof GeminiAPIError) {
-      console.error("🚨 Gemini API Error (Phase Rationales):", error.toJSON());
-    } else {
-      console.error("🚨 generatePhaseRationales error:", error.message);
-    }
-
-    // Always use fallback on any error
-    console.warn("⚠️ Using fallback phase titles and rationales due to error");
-    return phases.map((phase, index) => {
-      const tempInfo = phase._tempPhaseInfo;
-      const { _tempPhaseInfo, ...cleanPhase } = phase;
-
-      // Calculate fallback weeks
-      const estimatedWeeks =
-        cleanPhase.estimatedWeeks ||
-        calculateWeeksForPhase(
-          cleanPhase.totalHours,
-          preferences.weeklyStudyHours
-        );
-
-      return {
-        ...cleanPhase,
-        title: createFallbackPhaseTitle(tempInfo, preferences),
-        phaseRationale: createFallbackPhaseRationale(
-          phase,
-          index,
-          phases.length,
-          preferences
-        ),
-        estimatedWeeks: Math.max(1, Math.ceil(estimatedWeeks)),
-        estimatedDays: Math.ceil(estimatedWeeks * 7),
-        estimatedTime: formatEstimatedTime(estimatedWeeks),
-      };
-    });
   }
+
+  // Layer 3: Manual fallback
+  console.warn("⚠️ [Layer 3] Using manual fallback phase titles and rationales");
+  return phases.map((phase, index) => {
+    const tempInfo = phase._tempPhaseInfo;
+    const { _tempPhaseInfo, ...cleanPhase } = phase;
+
+    // Calculate fallback weeks
+    const estimatedWeeks =
+      cleanPhase.estimatedWeeks ||
+      calculateWeeksForPhase(
+        cleanPhase.totalHours,
+        preferences.weeklyStudyHours
+      );
+
+    return {
+      ...cleanPhase,
+      title: createFallbackPhaseTitle(tempInfo, preferences),
+      phaseRationale: createFallbackPhaseRationale(
+        phase,
+        index,
+        phases.length,
+        preferences
+      ),
+      estimatedWeeks: Math.max(1, Math.ceil(estimatedWeeks)),
+      estimatedDays: Math.ceil(estimatedWeeks * 7),
+      estimatedTime: formatEstimatedTime(estimatedWeeks),
+    };
+  });
 }
 
 /**
