@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/genai": "^1.30.0",
     "@google/generative-ai": "^0.24.1",
     "@payos/node": "^2.0.3",
     "axios": "^1.13.1",
