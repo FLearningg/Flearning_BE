@@ -8,6 +8,9 @@ const {
   emitUnreadCount,
   emitMessageStatusUpdate,
 } = require("../socket/eventEmitters");
+const {
+  createAndSendNotification,
+} = require("../services/notificationService");
 
 /**
  * @desc    Send a message to another user
@@ -103,11 +106,15 @@ exports.sendMessage = async (req, res) => {
       .populate("sender_id", "firstName lastName userName userImage")
       .populate("receiver_id", "firstName lastName userName userImage");
 
+    // Populate conversation participants for socket emission
+    const populatedConversation = await Conversation.findById(conversation._id)
+      .populate("participants", "firstName lastName userName userImage");
+
     // Emit Socket.IO events for real-time updates
     const io = req.app.get("io");
     if (io) {
       emitNewMessage(io, populatedMessage);
-      emitConversationUpdate(io, conversation);
+      emitConversationUpdate(io, populatedConversation);
 
       // Update unread count for receiver
       const unreadCount = await Chat.countDocuments({
@@ -115,7 +122,31 @@ exports.sendMessage = async (req, res) => {
         status: { $ne: "read" },
       });
       emitUnreadCount(io, receiverId, unreadCount);
+
+      const senderName = req.user.firstName || "Một ai đó";
+
+      await createAndSendNotification(io, {
+        recipient: receiverId,
+        sender: senderId,
+        type: "chat_message", // Một type mới để phân biệt
+        content: `đã gửi cho bạn một tin nhắn.`,
+        link: `/profile/message`, // Link tới trang chat chung
+      });
     }
+
+    // Format conversation for response (same as getConversations)
+    const otherParticipant = populatedConversation.participants.find(
+      (participant) => participant._id.toString() !== senderId
+    );
+
+    const formattedConversation = {
+      id: populatedConversation._id,
+      lastMessage: populatedConversation.last_message,
+      status: populatedConversation.status,
+      updatedAt: populatedConversation.updatedAt,
+      createdAt: populatedConversation.createdAt,
+      otherParticipant: otherParticipant || null,
+    };
 
     res.status(201).json({
       success: true,
@@ -123,6 +154,7 @@ exports.sendMessage = async (req, res) => {
       data: {
         message: populatedMessage,
         conversationId: conversation._id,
+        conversation: formattedConversation,
       },
     });
   } catch (error) {

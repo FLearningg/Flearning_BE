@@ -30,6 +30,7 @@ const {
   getCourseApprovalStats,
   deactivateCourse,
   reactivateCourse,
+  triggerAIReview,
 } = require("../controllers/adminController");
 const authorize = require("../middlewares/authMiddleware");
 const { getDashboardStats } = require("../controllers/adminController");
@@ -107,5 +108,6 @@ router.get("/categories", getAllCategories);
 router.get("/instructor-requests", getInstructorRequests);
 router.post("/instructors/approve", approveInstructorRequest);
 router.post("/instructors/deny", denyInstructorRequest);
+router.post("/instructors/trigger-ai-review", triggerAIReview);
 
 module.exports = router;

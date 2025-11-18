@@ -2,7 +2,47 @@ const Feedback = require("../models/feedbackModel");
 const Course = require("../models/courseModel");
 const User = require("../models/userModel");
 const Enrollment = require("../models/enrollmentModel");
+const InstructorProfile = require("../models/instructorProfileModel");
 const mongoose = require("mongoose");
+
+/**
+ * Helper function to update instructor ratings
+ */
+const updateInstructorRating = async (instructorId) => {
+  try {
+    // Get all courses by this instructor
+    const courses = await Course.find({ createdBy: instructorId });
+    const courseIds = courses.map((c) => c._id);
+
+    if (courseIds.length === 0) {
+      return;
+    }
+
+    // Get all feedbacks for instructor's courses
+    const feedbacks = await Feedback.find({
+      courseId: { $in: courseIds },
+    });
+
+    const totalReviews = feedbacks.length;
+    const averageRating =
+      totalReviews > 0
+        ? feedbacks.reduce((sum, feedback) => sum + feedback.rateStar, 0) /
+          totalReviews
+        : 0;
+
+    // Update instructor profile
+    await InstructorProfile.findOneAndUpdate(
+      { userId: instructorId },
+      {
+        totalReviews: totalReviews,
+        averageRating: parseFloat(averageRating.toFixed(1)),
+        totalCourses: courses.length,
+      }
+    );
+  } catch (error) {
+    console.error("Error updating instructor rating:", error);
+  }
+};
 
 /**
  * @desc    Get all feedback for a specific course
@@ -144,6 +184,9 @@ exports.createCourseFeedback = async (req, res) => {
       rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
     });
 
+    // Update instructor rating
+    await updateInstructorRating(course.createdBy);
+
     // Populate user information for response
     const populatedFeedback = await Feedback.findById(newFeedback._id).populate(
       "userId",
@@ -220,9 +263,16 @@ exports.updateCourseFeedback = async (req, res) => {
         : 0;
 
     // Update course rating
-    await Course.findByIdAndUpdate(courseId, {
-      rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
-    });
+    const updatedCourse = await Course.findByIdAndUpdate(
+      courseId,
+      { rating: Math.round(averageRating * 10) / 10 },
+      { new: false } // Get old version to access createdBy
+    );
+
+    // Update instructor rating
+    if (updatedCourse) {
+      await updateInstructorRating(updatedCourse.createdBy);
+    }
 
     // Populate user information for response
     const populatedFeedback = await Feedback.findById(feedback._id).populate(
@@ -298,9 +348,16 @@ exports.deleteCourseFeedback = async (req, res) => {
         : 0;
 
     // Update course rating
-    await Course.findByIdAndUpdate(courseId, {
-      rating: Math.round(averageRating * 10) / 10 // Round to 1 decimal place
-    });
+    const updatedCourse = await Course.findByIdAndUpdate(
+      courseId,
+      { rating: Math.round(averageRating * 10) / 10 },
+      { new: false } // Get old version to access createdBy
+    );
+
+    // Update instructor rating
+    if (updatedCourse) {
+      await updateInstructorRating(updatedCourse.createdBy);
+    }
 
     res.status(200).json({ message: "Feedback deleted successfully." });
   } catch (error) {

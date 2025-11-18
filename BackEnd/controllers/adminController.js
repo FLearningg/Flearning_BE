@@ -13,8 +13,10 @@ const InstructorProfile = require("../models/instructorProfileModel");
 const {
   instructorApplicationApprovedEmail,
   instructorApplicationDeniedEmail,
+  userBannedEmail,
 } = require("../utils/emailTemplates");
 const sendEmail = require("../utils/sendEmail");
+const { reviewInstructorProfile } = require("../services/aiReviewService");
 /**
  * Helper function to extract file name from URL
  * @param {string} url - Firebase storage URL or any URL
@@ -454,6 +456,41 @@ exports.updateUserStatus = async (req, res) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    // If user is being banned, terminate all their active sessions and send email
+    if (status === "banned") {
+      try {
+        // Import the Token model to delete user's tokens
+        const Token = require("../models/tokenModel");
+        
+        // Delete all refresh tokens for this user to terminate their sessions
+        await Token.deleteMany({ userId: id });
+        
+        console.log(`All sessions terminated for banned user: ${user.email}`);
+        
+        // Send email notification to banned user
+        try {
+          const emailContent = userBannedEmail(user.firstName || user.userName);
+          const emailResult = await sendEmail(
+            user.email,
+            "Your Account Has Been Banned",
+            emailContent
+          );
+          
+          if (emailResult.success) {
+            console.log(`Ban notification email sent successfully to: ${user.email}`);
+          } else {
+            console.error(`Failed to send ban notification email to ${user.email}:`, emailResult.error);
+          }
+        } catch (emailError) {
+          console.error("Error sending ban notification email:", emailError);
+          // Continue with the response even if email sending fails
+        }
+      } catch (tokenError) {
+        console.error("Error terminating user sessions:", tokenError);
+        // Continue with the response even if session termination fails
+      }
     }
 
     res.status(200).json({
@@ -3022,23 +3059,60 @@ exports.getInstructorRequests = async (req, res) => {
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Execute query with pagination
-    const requests = await InstructorProfile.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate("userId", "firstName lastName email userImage")
-      .select(
-        "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt"
-      );
+    // Get RejectedInstructor model
+    const RejectedInstructor = require("../models/rejectedInstructorModel");
 
-    // Get total count for pagination
-    const totalRequests = await InstructorProfile.countDocuments(query);
+    // Get counts from both collections
+    const [instructorCount, rejectedCount] = await Promise.all([
+      InstructorProfile.countDocuments(query),
+      RejectedInstructor.countDocuments(query)
+    ]);
 
-    // Calculate pagination info
+    const totalRequests = instructorCount + rejectedCount;
     const totalPages = Math.ceil(totalRequests / parseInt(limit));
     const hasNextPage = parseInt(page) < totalPages;
     const hasPrevPage = parseInt(page) > 1;
+
+    // Execute queries from both collections with pagination
+    const [instructorProfiles, rejectedProfiles] = await Promise.all([
+      // Get profiles from InstructorProfile collection
+      InstructorProfile.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        ),
+      
+      // Get profiles from RejectedInstructor collection
+      RejectedInstructor.find(query)
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate("userId", "firstName lastName email userImage")
+        .select(
+          "userId phone expertise experience documents applicationStatus rejectionReason appliedAt approvedAt rejectedAt createdAt updatedAt aiReviewStatus aiReviewScore aiReviewDetails aiReviewedAt"
+        )
+    ]);
+
+    // Combine results from both collections
+    const allRequests = [...instructorProfiles, ...rejectedProfiles];
+    
+    // Sort combined results (in case the sort between collections is needed)
+    allRequests.sort((a, b) => {
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+      
+      if (sortOrder === "desc") {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      } else {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      }
+    });
+
+    // Apply pagination to combined results
+    const requests = allRequests.slice(0, parseInt(limit));
 
     res.status(200).json({
       success: true,
@@ -3172,5 +3246,103 @@ exports.denyInstructorRequest = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * @desc    Trigger AI review cho một hoặc tất cả pending applications
+ * @route   POST /api/admin/trigger-ai-review
+ * @access  Private/Admin
+ */
+exports.triggerAIReview = async (req, res) => {
+  try {
+    const { applicationId } = req.body;
+
+    if (applicationId) {
+      // Review một application cụ thể
+      console.log(`🤖 Admin triggering AI review for application: ${applicationId}`);
+      
+      const profile = await InstructorProfile.findById(applicationId);
+      if (!profile) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Instructor profile not found." 
+        });
+      }
+
+      if (profile.applicationStatus !== 'pending') {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Profile is not in pending status. Current status: ${profile.applicationStatus}` 
+        });
+      }
+
+      const aiReviewResult = await reviewInstructorProfile(applicationId);
+      
+      return res.status(200).json({
+        success: true,
+        message: "AI review triggered successfully for the application.",
+        data: aiReviewResult
+      });
+    } else {
+      // Review tất cả pending applications
+      console.log(`🤖 Admin triggering AI review for ALL pending applications`);
+      
+      const pendingProfiles = await InstructorProfile.find({ 
+        applicationStatus: 'pending' 
+      });
+
+      if (pendingProfiles.length === 0) {
+        return res.status(200).json({ 
+          success: true, 
+          message: "No pending applications to review.",
+          data: { processed: 0, results: [] }
+        });
+      }
+
+      console.log(`📋 Found ${pendingProfiles.length} pending applications to review`);
+
+      const results = [];
+      for (const profile of pendingProfiles) {
+        try {
+          console.log(`🔄 Processing application: ${profile._id}`);
+          const aiReviewResult = await reviewInstructorProfile(profile._id);
+          results.push({
+            applicationId: profile._id,
+            success: aiReviewResult.success,
+            result: aiReviewResult
+          });
+        } catch (error) {
+          console.error(`❌ Error reviewing application ${profile._id}:`, error);
+          results.push({
+            applicationId: profile._id,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      return res.status(200).json({
+        success: true,
+        message: `AI review completed. Success: ${successCount}, Failed: ${failCount}`,
+        data: {
+          total: pendingProfiles.length,
+          processed: results.length,
+          successCount,
+          failCount,
+          results
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Error triggering AI review:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: error.message 
+    });
   }
 };

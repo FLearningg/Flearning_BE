@@ -141,6 +141,51 @@ exports.instructorVerificationEmail = (firstName, verificationUrl) => {
 };
 
 /**
+ * Instructor application verification email (for users with verified account)
+ */
+exports.instructorApplicationVerificationEmail = (firstName, verificationUrl) => {
+  const content = `
+    ${emailHeader("Verify Your Instructor Application")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        Thank you for applying to become an instructor on F-Learning! We're excited to review your application.
+      </p>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        <strong>Please verify your instructor application by clicking the button below:</strong>
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button(verificationUrl, "Verify Application")}
+      </div>
+      <div style="background-color: #e6f7ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">📋 What Happens Next?</h3>
+        <ol style="color: #595959; font-size: 15px; line-height: 1.8; margin: 0; padding-left: 20px;">
+          <li><strong>Verify your application</strong> (click the button above)</li>
+          <li><strong>AI Review</strong> - Our AI will automatically review your application</li>
+          <li><strong>Get notified</strong> - You'll receive an email with the result immediately</li>
+          <li><strong>Start teaching</strong> - If approved, you can start creating courses right away!</li>
+        </ol>
+      </div>
+      <div style="background-color: ${F_LEARNING_LIGHT}; padding: 16px; border-radius: 8px; border-left: 4px solid ${F_LEARNING_ORANGE};">
+        <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
+          <strong>Important:</strong> After verification, your application will be automatically reviewed by our AI system. 
+          You will receive an approval or review notification within minutes.
+        </p>
+      </div>
+      <p style="color: #595959; font-size: 14px; margin-top: 30px;">
+        If the button doesn't work, copy and paste this link into your browser:
+      </p>
+      <p style="color: ${F_LEARNING_ORANGE}; font-size: 13px; word-break: break-all;">
+        ${verificationUrl}
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
+
+/**
  * Instructor application received confirmation
  */
 exports.instructorApplicationReceivedEmail = (
@@ -336,6 +381,84 @@ exports.userEnrolledInCourseEmail = (userName, courseName, welcomeMessage) => {
     </div>
     ${emailFooter()}
   `;
+
+  return emailWrapper(content);
+};
+
+/**
+ * User banned email
+ */
+exports.userBannedEmail = (firstName) => {
+  const content = `
+    ${emailHeader("Account Banned")}
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #262626; margin-top: 0;">Hi ${firstName},</h2>
+      <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+        We regret to inform you that your F-Learning account has been banned due to violation of our terms of service.
+      </p>
+      <div style="background-color: #fff7e6; padding: 20px; border-radius: 8px; margin: 25px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">What does this mean?</h3>
+        <p style="color: #8c8c8c; font-size: 14px; margin: 10px 0;">
+          Your account has been restricted and you can no longer access the platform. All active sessions have been terminated.
+        </p>
+      </div>
+      <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin: 25px 0;">
+        <h3 style="color: #262626; margin-top: 0; font-size: 18px;">Next Steps</h3>
+        <ol style="color: #595959; font-size: 15px; line-height: 1.8; margin: 0; padding-left: 20px;">
+          <li><strong>Review our terms</strong> - Please review our terms of service to understand what led to this action</li>
+          <li><strong>Contact support</strong> - If you believe this was a mistake, please contact our support team</li>
+          <li><strong>Appeal process</strong> - You may request a review of this decision by contacting support</li>
+        </ol>
+      </div>
+      <div style="text-align: center; margin: 30px 0;">
+        ${button("https://flearningg.vercel.app/contact", "Contact Support")}
+      </div>
+      <div style="background-color: ${F_LEARNING_LIGHT}; padding: 16px; border-radius: 8px; border-left: 4px solid ${F_LEARNING_ORANGE};">
+        <p style="margin: 0; color: #8c8c8c; font-size: 14px;">
+          <strong>Note:</strong> If you believe this ban was issued in error, please contact our support team immediately at support@f-learning.com.
+        </p>
+      </div>
+      <p style="color: #595959; font-size: 14px; margin-top: 30px;">
+        If button doesn't work, copy and paste this link into your browser:
+      </p>
+      <p style="color: ${F_LEARNING_ORANGE}; font-size: 13px; word-break: break-all;">
+        https://flearningg.vercel.app/contact
+      </p>
+    </div>
+    ${emailFooter()}
+  `;
+
+  return emailWrapper(content);
+};
+
+exports.userCompletedCourseEmail = (
+  userName,
+  courseName,
+  congratsMessage,
+  certificateUrl // <-- Tham số mới
+) => {
+  const content = `
+${emailHeader(`Congratulations on Completing ${courseName}!`)}
+<div style="padding: 40px 30px;">
+  <h2 style="color: #262626; margin-top: 0;">Congratulations, ${userName}!</h2>
+  <p style="color: #595959; font-size: 32px; line-height: 1.6;">
+    ${congratsMessage || "You've successfully completed the course."}
+  </p>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    We are thrilled to confirm that you have officially completed the course: <strong>"${courseName}"</strong>. 🎓
+  </p>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    This is a fantastic achievement, and we're proud of your dedication and hard work.
+  </p>
+  <div style="text-align: center; margin: 30px 0;">
+    ${button(certificateUrl, "View Your Certificate")}
+  </div>
+  <p style="color: #595959; font-size: 16px; line-height: 1.6;">
+    Keep up the great work! Why not check out another course to continue your learning journey?
+  </p>
+</div>
+${emailFooter()}
+`;
 
   return emailWrapper(content);
 };

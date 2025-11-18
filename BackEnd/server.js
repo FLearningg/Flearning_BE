@@ -32,6 +32,11 @@ const progressRoutes = require("./routes/progressRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const watchCourseRoute = require("./routes/WatchCourseRoute");
 const quizRoutes = require("./routes/quizRoutes");
+const aiRoutes = require("./routes/aiRoutes");
+const recommendationRoutes = require("./routes/recommendationRoutes");
+const proctoringRoutes = require("./routes/proctoringRoutes");
+const surveyRoutes = require("./routes/surveyRoutes");
+const { startAutoReviewService } = require("./services/autoAIReviewService");
 
 const app = express();
 
@@ -105,6 +110,7 @@ console.log("✅ [SERVER] Socket.IO instance made available to routes");
 // Initialize socket handlers
 console.log("🔧 [SERVER] Loading Socket.IO chat handlers...");
 require("./socket/chatSocket")(io);
+require("./socket/notificationSocket")(io);
 
 app.use(
   cors({
@@ -116,7 +122,7 @@ app.use(
 );
 app.use(
   express.json({
-    limit: '50mb', // Increase payload limit for large quiz data
+    limit: "50mb", // Increase payload limit for large quiz data
     // Chúng ta cần giữ lại raw body để xác thực webhook
     verify: (req, res, buf) => {
       // Chỉ lưu lại rawBody cho các request đến webhook của PayOS
@@ -126,7 +132,7 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 
 console.log("✅ [SERVER] Middleware configured");
@@ -200,6 +206,13 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/watch-course", watchCourseRoute);
 // Quiz routes
 app.use("/api/quiz", quizRoutes);
+app.use("/api/ai", aiRoutes);
+// Proctoring routes
+app.use("/api/proctoring", proctoringRoutes);
+// Learning Path routes
+app.use("/api/recommendations", recommendationRoutes);
+// Survey routes
+app.use("/api/survey", surveyRoutes);
 
 console.log("✅ [SERVER] All routes configured");
 
@@ -215,6 +228,10 @@ mongoose
   })
   .then(() => {
     console.log("✅ [SERVER] Connected to MongoDB successfully");
+
+    // Khởi động auto AI review service
+    startAutoReviewService(30); // Check mỗi 30 phút
+
     const PORT = process.env.PORT || 5000;
     // Use server.listen instead of app.listen for Socket.IO
     server.listen(PORT, () => {

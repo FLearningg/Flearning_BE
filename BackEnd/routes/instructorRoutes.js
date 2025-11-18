@@ -4,9 +4,11 @@ const {
   getDashboardStats,
   getAllCategories,
   createCourse,
+  saveToDraft,
   updateCourse,
   getCourses,
   getCourseById,
+  getCourseAnalytics,
   createSection,
   updateSection,
   deleteSection,
@@ -19,6 +21,8 @@ const {
   updateMyProfile,
   getPublicProfile,
   getInstructorStats,
+  getInstructorFeedbacks,
+  updatePayoutDetails,
 } = require("../controllers/instructorController");
 const authorize = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
@@ -33,6 +37,7 @@ const {
 // Public routes (no auth required)
 router.get("/public/:userId", getPublicProfile);
 router.get("/stats/:userId", getInstructorStats);
+router.get("/feedbacks/:userId", getInstructorFeedbacks);
 
 // All instructor routes below require instructor authorization
 router.use(authorize("instructor"));
@@ -48,9 +53,11 @@ router.get("/profile", getMyProfile);
 router.put("/profile", upload.single("avatar"), updateMyProfile);
 
 // Course management routes
+router.post("/courses/draft", saveToDraft); // Must be before /courses to avoid route conflict
 router.post("/courses", createCourse);
 router.get("/courses", getCourses);
 router.get("/courses/:courseId", getCourseById);
+router.get("/courses/:courseId/analytics", getCourseAnalytics);
 router.put("/courses/:courseId", updateCourse);
 
 // Section management routes
@@ -75,5 +82,7 @@ router.delete("/files", deleteFile);
 // Temporary file management routes
 router.get("/temporary-files/:folderType", getTemporaryFiles);
 router.post("/move-to-course", moveFileFromTemporary);
+
+router.put("/payout-details", updatePayoutDetails);
 
 module.exports = router;

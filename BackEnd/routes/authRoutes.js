@@ -3,6 +3,8 @@ const {
   register,
   login,
   verifyEmail,
+  verifyInstructorEmail,
+  verifyInstructorApplication,
   googleLogin,
   refreshToken,
   logout,
@@ -19,6 +21,8 @@ const router = express.Router();
 router.post("/register", register);
 router.post("/instructor/register", registerInstructor);
 router.get("/verify-email/:token", verifyEmail);
+router.get("/verify-instructor-email/:token", verifyInstructorEmail);
+router.get("/verify-instructor-application/:token", verifyInstructorApplication);
 router.post("/login", login);
 router.post("/google", googleLogin);
 router.post("/refresh-token", refreshToken);
