@@ -33,6 +33,10 @@ const UserSchema = new Schema(
       type: mongoose.Schema.Types.Decimal128,
       default: 0.0,
     },
+    toxicViolationCount: {
+      type: Number,
+      default: 0,
+    },
     payoutDetails: {
       bankName: String,
       accountNumber: String,

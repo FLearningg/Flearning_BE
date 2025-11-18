@@ -158,6 +158,7 @@ const createPaymentLink = async (req, res) => {
   const { description, price, courseIds } = req.body;
   const userId = req.user.id;
 
+  // Validation
   if (!description || !price || !courseIds || courseIds.length === 0) {
     return res.status(400).json({ message: "Vui lòng cung cấp đủ thông tin." });
   }
@@ -166,7 +167,9 @@ const createPaymentLink = async (req, res) => {
   session.startTransaction();
 
   try {
+    // ==================================================================
     // BƯỚC 1: Xử lý các bản ghi Enrollment (DÙNG VÒNG LẶP TUẦN TỰ)
+    // ==================================================================
     const resultingEnrollments = []; // Tạo mảng trống để lưu kết quả
 
     for (const courseId of courseIds) {
@@ -182,15 +185,17 @@ const createPaymentLink = async (req, res) => {
             `[Payment] Kích hoạt lại enrollment 'cancelled' cho course: ${courseId}`
           );
           existingEnrollment.status = "pending";
-          const savedDoc = await existingEnrollment.save({ session }); // <-- Luôn .save({ session })
+          const savedDoc = await existingEnrollment.save({ session });
           resultingEnrollments.push(savedDoc);
-        } // TÌNH HUỐNG 2: Đã tồn tại & đang chờ
+        }
+        // TÌNH HUỐNG 2: Đã tồn tại & đang chờ
         else if (existingEnrollment.status === "pending") {
           console.log(
             `[Payment] Tái sử dụng enrollment 'pending' cho course: ${courseId}`
           );
           resultingEnrollments.push(existingEnrollment);
-        } // TÌNH HUỐNG 3: Đã sở hữu
+        }
+        // TÌNH HUỐNG 3: Đã sở hữu
         else {
           console.error(
             `[Payment] LỖI: Người dùng ${userId} đã sở hữu course ${courseId}.`
@@ -201,22 +206,27 @@ const createPaymentLink = async (req, res) => {
           error.statusCode = 409;
           throw error; // Ném lỗi sẽ bị bắt ở khối catch
         }
-      } // TÌNH HUỐNG 4: Không tồn tại -> Tạo mới
+      }
+      // TÌNH HUỐNG 4: Không tồn tại -> Tạo mới
       else {
         console.log(
-          `[Payment] Khong Tạo mới enrollment 'pending' cho course: ${courseId}`
+          `[Payment] Tạo mới enrollment 'pending' cho course: ${courseId}`
         );
         const newEnrollment = new Enrollment({
           userId: userId,
           courseId: courseId,
           status: "pending",
         });
-        const savedDoc = await newEnrollment.save({ session }); // <-- Luôn .save({ session })
+        const savedDoc = await newEnrollment.save({ session });
         resultingEnrollments.push(savedDoc);
       }
     } // Kết thúc vòng lặp for...of
-    const newEnrollmentIds = resultingEnrollments.map((e) => e._id); // BƯỚC 2: Tạo một Payment duy nhất
 
+    const newEnrollmentIds = resultingEnrollments.map((e) => e._id);
+
+    // ==================================================================
+    // BƯỚC 2: Tạo Payment
+    // ==================================================================
     const orderCode = parseInt(
       Date.now().toString() + Math.floor(Math.random() * 1000)
     );
@@ -226,27 +236,33 @@ const createPaymentLink = async (req, res) => {
       paymentDate: new Date(),
       amount: price,
       status: "pending",
-    }); // BƯỚC 3: Tạo Transaction và liên kết với Payment
+    });
 
+    // ==================================================================
+    // BƯỚC 3: Tạo Transaction (Lưu tạm description cũ)
+    // ==================================================================
     const transaction = new Transaction({
       userId,
       amount: price,
       status: "pending",
-      description,
+      description: description, // Lưu tạm text gốc (VD: "Thanh toan...")
       orderCode: orderCode,
       paymentId: newPayment._id,
     });
 
     await newPayment.save({ session });
-    await transaction.save({ session }); // BƯỚC 4: Tạo link PayOS
+    await transaction.save({ session });
 
+    // ==================================================================
+    // BƯỚC 4: Gửi yêu cầu sang PayOS để tạo link
+    // ==================================================================
     const safeBuyerName =
       [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") ||
       req.user.email.split("@")[0];
 
     const payosOrder = {
       amount: price,
-      description: description,
+      description: description.substring(0, 25), // Cắt ngắn bớt để tránh lỗi PayOS nếu quá dài
       orderCode: orderCode,
       returnUrl: `${process.env.CLIENT_URL}/payment/success?orderCode=${orderCode}`,
       cancelUrl: `${process.env.CLIENT_URL}/payment/cancelled?orderCode=${orderCode}`,
@@ -256,13 +272,41 @@ const createPaymentLink = async (req, res) => {
 
     console.log("Dữ liệu gửi đến PayOS:", payosOrder);
 
+    // Gọi API PayOS
     const paymentLinkResponse = await payOs.paymentRequests.create(payosOrder);
+
+    // ==================================================================
+    // BƯỚC 5 (QUAN TRỌNG): Cập nhật Description chuẩn từ PayOS
+    // ==================================================================
+    // PayOS sẽ trả về description có chứa mã định danh (VD: CSYMX...)
+    // Chúng ta cần lưu cái này vào DB để khi user quét QR thì nội dung khớp nhau
+
+    if (paymentLinkResponse && paymentLinkResponse.description) {
+      console.log(
+        "Cập nhật description từ PayOS:",
+        paymentLinkResponse.description
+      );
+      transaction.description = paymentLinkResponse.description;
+
+      // Lưu lại transaction với description mới trong cùng session
+      await transaction.save({ session });
+    }
 
     await session.commitTransaction(); // <-- Commit khi mọi thứ thành công
 
+    // Trả về client
     res.status(200).json({
       message: "Tạo link thanh toán thành công",
       checkoutUrl: paymentLinkResponse.checkoutUrl,
+      // Trả về thêm data này nếu Frontend muốn tự render QR Code
+      qrData: {
+        accountNumber: paymentLinkResponse.accountNumber,
+        accountName: paymentLinkResponse.accountName,
+        amount: paymentLinkResponse.amount,
+        description: paymentLinkResponse.description, // Cái này chứa mã CSYMX...
+        bin: paymentLinkResponse.bin,
+        qrCode: paymentLinkResponse.qrCode, // String QR base64 (nếu có)
+      },
     });
   } catch (error) {
     await session.abortTransaction(); // <-- Tự động abort nếu có lỗi
