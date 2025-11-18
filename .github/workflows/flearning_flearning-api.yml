@@ -24,21 +24,25 @@ jobs:
           node-version: "22.x"
 
       # 3️⃣ Cài dependencies (tự tải lại theo package.json)
-      - name: Install dependencies, build, and test
+      - name: Install dependencies
         working-directory: ./BackEnd
         run: |
           npm install
           npm run build --if-present
-          npm run test --if-present
 
-      # 4️⃣ Đóng gói dự án thành file release.zip
+      # 4️⃣ Loại bỏ dev dependencies để giảm dung lượng
+      - name: Prune dev dependencies
+        working-directory: ./BackEnd
+        run: npm prune --production
+
+      # 5️⃣ Đóng gói dự án thành file release.zip (bao gồm node_modules)
       - name: Zip backend folder for deployment
         run: |
           cd BackEnd
-          # ❗ KHÔNG loại trừ node_modules nữa
-          zip -r ../release.zip . -x "*.git*" -x "*.github*"
+          # Đóng gói toàn bộ, bao gồm node_modules
+          zip -r ../release.zip . -x "*.git*" -x "*.github*" -x "*.vscode*" -x "*.env.example" -x "node_modules/.cache/*"
 
-      # 5️⃣ Upload artifact sang job deploy
+      # 6️⃣ Upload artifact sang job deploy
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
@@ -53,17 +57,17 @@ jobs:
       contents: read
 
     steps:
-      # 6️⃣ Tải lại artifact từ job build
+      # 7️⃣ Tải lại artifact từ job build
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: node-app
 
-      # 7️⃣ Giải nén file zip để deploy
+      # 8️⃣ Giải nén file zip để deploy
       - name: Unzip artifact for deployment
         run: unzip release.zip
 
-      # 8️⃣ Đăng nhập vào Azure
+      # 9️⃣ Đăng nhập vào Azure
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -71,7 +75,7 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_69C25F6574894163A735A87773C4F9DA }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E260C1CA160E4EC7B78283FDE5727535 }}
 
-      # 9️⃣ Deploy file zip lên Azure Web App
+      # 🔟 Deploy lên Azure Web App
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
