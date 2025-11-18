@@ -17,9 +17,14 @@ const MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
 // Separate configuration for summarization
-const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || "gemini-2.5-flash";
+const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || "gemini-2.0-flash";
 const SUMMARIZATION_API_KEY = process.env.GEMINI_SUMMARIZATION_API_KEY || process.env.GEMINI_API_KEY;
 const SUMMARIZATION_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${SUMMARIZATION_MODEL}:generateContent?key=${SUMMARIZATION_API_KEY}`;
+const parsedSummarizationMaxTokens = parseInt(process.env.SUMMARIZATION_MAX_OUTPUT_TOKENS, 10);
+const SUMMARIZATION_MAX_OUTPUT_TOKENS =
+  Number.isFinite(parsedSummarizationMaxTokens) && parsedSummarizationMaxTokens > 0
+    ? Math.min(parsedSummarizationMaxTokens, 8192)
+    : 2048;
 
 // Cache configuration for summarization
 const SUMMARIZATION_CACHE_TTL = process.env.SUMMARIZATION_CACHE_TTL || 3600; // 1 hour default
@@ -996,7 +1001,7 @@ Kết luận:
       generationConfig: {
         temperature: 0.3,
         topP: 0.8,
-        maxOutputTokens: 50000, // Ultra-detailed video summaries with comprehensive analysis
+        maxOutputTokens: SUMMARIZATION_MAX_OUTPUT_TOKENS,
       },
     };
 
@@ -1145,7 +1150,7 @@ Kết luận:
       generationConfig: {
         temperature: 0.3,
         topP: 0.8,
-        maxOutputTokens: 50000, // Ultra-detailed article summaries with comprehensive analysis
+        maxOutputTokens: SUMMARIZATION_MAX_OUTPUT_TOKENS,
       },
     };
 
