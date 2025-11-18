@@ -9,6 +9,9 @@ const Cart = require("../models/cartModel");
 const Course = require("../models/courseModel");
 const { userEnrolledInCourseEmail } = require("../utils/emailTemplates");
 const sendEmail = require("../utils/sendEmail");
+const {
+  createAndSendNotification,
+} = require("../services/notificationService");
 
 // Bỏ WEB_URL vì không dùng
 // const WEB_URL = "http://localhost:3000";
@@ -282,135 +285,84 @@ const createPaymentLink = async (req, res) => {
  * @access  Public
  */
 const handlePayOsWebhook = async (req, res) => {
-  console.log("=============== WEBHOOK RECEIVED ===============");
-  console.log("Timestamp:", new Date().toISOString());
-  console.log("Webhook Raw Body:", req.rawBody);
-  console.log("Webhook Parsed Body:", JSON.stringify(req.body, null, 2));
-  console.log("Webhook Headers:", JSON.stringify(req.headers, null, 2));
-  console.log("==============================================");
-
+  // Validation ping
   if (!req.rawBody) {
-    console.log(
-      "[WEBHOOK] Nhận được request không có body (validation ping). Trả về 200 OK."
-    );
     return res
       .status(200)
       .json({ message: "Webhook validation ping received." });
   }
 
   const webhookData = req.body;
+  const io = req.app.get("io");
 
   try {
-    console.log(
-      "[WEBHOOK] Bắt đầu xác thực dữ liệu (dùng verifyPaymentWebhook)..."
-    );
     const verifiedData = await payOs.webhooks.verify(webhookData);
-    console.log(
-      "[WEBHOOK] Dữ liệu đã được xác thực thành công.",
-      verifiedData.desc
-    ); // ***** SỬA LỖI TẠI ĐÂY: Chuyển "Success" thành "success" (chữ thường) *****
 
     if (verifiedData.code === "00" && verifiedData.desc === "success") {
-      console.log("[WEBHOOK] Giao dịch thành công, bắt đầu xử lý.");
       const orderCode = verifiedData.orderCode;
-      console.log(`[WEBHOOK] Tìm kiếm Transaction với orderCode: ${orderCode}`);
-
       const transaction = await Transaction.findOne({ orderCode: orderCode });
 
       if (transaction && transaction.status === "pending") {
-        console.log(
-          `[WEBHOOK] Đã tìm thấy Transaction ID: ${transaction._id} ở trạng thái pending.`
-        ); // 1. Cập nhật Transaction
-
+        // 1. Cập nhật Transaction
         transaction.gatewayTransactionId = verifiedData.paymentId;
         transaction.status = "completed";
         await transaction.save();
-        console.log(
-          `[WEBHOOK] Đã cập nhật Transaction ID: ${transaction._id} sang 'completed'.`
-        ); // 2. Cập nhật Payment
 
+        // 2. Cập nhật Payment
         const payment = await Payment.findById(transaction.paymentId);
         if (payment) {
-          console.log(`[WEBHOOK] Đã tìm thấy Payment ID: ${payment._id}.`);
           payment.status = "completed";
           await payment.save();
-          console.log(
-            `[WEBHOOK] Đã cập nhật Payment ID: ${payment._id} sang 'completed'.`
-          ); // 3. Cập nhật Enrollments
 
-          console.log(
-            `[WEBHOOK] Bắt đầu cập nhật ${payment.enrollmentIds.length} enrollment(s).`
-          );
+          // 3. Cập nhật Enrollments
           await Enrollment.updateMany(
             { _id: { $in: payment.enrollmentIds } },
             { $set: { status: "enrolled" } }
           );
-          console.log("[WEBHOOK] Đã cập nhật xong các enrollment(s).");
 
-          // 4. Lấy dữ liệu 1 LẦN DUY NHẤT để dùng cho cả (5) và (6)
+          // 4. Lấy dữ liệu enrollments (dùng chung cho các bước sau)
           const enrollments = await Enrollment.find({
             _id: { $in: payment.enrollmentIds },
           })
             .select("courseId")
             .populate({
               path: "courseId",
-              select: "createdBy price title", // Lấy ID giảng viên và GIÁ KHÓA HỌC
+              select: "createdBy price title",
             });
 
-          // 5. Cập nhật số tiền cho giảng viên (LOGIC ĐÃ SỬA)
+          // 5. Cập nhật số tiền cho giảng viên
           try {
-            const earningsMap = new Map(); // Dùng Map để cộng dồn doanh thu cho mỗi giảng viên
-
+            const earningsMap = new Map();
             for (const enrollment of enrollments) {
               if (enrollment.courseId) {
                 const course = enrollment.courseId;
                 const teacherId = course.createdBy.toString();
-
-                // LỖI NGHIÊM TRỌNG ĐÃ SỬA: Tính 80% của GIÁ KHÓA HỌC, không phải tổng payment
                 const coursePrice = parseFloat(course.price.toString());
                 const revenueShare = coursePrice * 0.8;
-
-                // Cộng dồn doanh thu (nếu giảng viên có nhiều khóa học trong 1 giao dịch)
                 const currentEarnings = earningsMap.get(teacherId) || 0;
                 earningsMap.set(teacherId, currentEarnings + revenueShare);
               }
             }
-
-            // Tối ưu N+1 Query: Tạo mảng các promise
             const updatePromises = [];
             for (const [teacherId, totalRevenue] of earningsMap.entries()) {
-              console.log(
-                `[WEBHOOK] Chuẩn bị cập nhật +${totalRevenue} cho Giảng viên ID: ${teacherId}`
-              );
-              // Dùng $inc để cập nhật nguyên tử, an toàn và nhanh hơn find/save
               updatePromises.push(
                 User.updateOne(
                   { _id: teacherId },
-                  { $inc: { moneyLeft: totalRevenue } } // $inc sẽ tự động cộng dồn
+                  { $inc: { moneyLeft: totalRevenue } }
                 )
               );
             }
-
-            // Chạy tất cả các lệnh cập nhật song song
             await Promise.all(updatePromises);
-            console.log(
-              `[WEBHOOK] Đã cập nhật tiền cho ${earningsMap.size} giảng viên.`
-            );
           } catch (moneyError) {
-            console.error(
-              "[WEBHOOK] Lỗi khi cập nhật số tiền cho giảng viên:",
-              moneyError
-            );
+            // Silent catch or minimal log if needed
           }
 
-          // 6. Xoá các khoá học đã mua khỏi giỏ hàng (Dùng lại 'enrollments')
+          // 6. Xoá các khoá học đã mua khỏi giỏ hàng
           try {
-            const courseIdsToRemove = enrollments.map((e) => e.courseId._id); // Lấy _id từ course đã populate
+            const courseIdsToRemove = enrollments
+              .map((e) => e.courseId?._id)
+              .filter(Boolean);
             const userId = transaction.userId;
-
-            console.log(
-              `[WEBHOOK] Bắt đầu xóa ${courseIdsToRemove.length} khóa học khỏi giỏ hàng user: ${userId}`
-            );
 
             const cart = await Cart.findOne({ userId: userId });
             if (cart) {
@@ -419,124 +371,63 @@ const handlePayOsWebhook = async (req, res) => {
                 (id) => !courseIdsStr.includes(id.toString())
               );
               await cart.save();
-              console.log("[WEBHOOK] Đã xóa các khóa học khỏi giỏ hàng.");
-            } else {
-              console.log(
-                `[WEBHOOK] Không tìm thấy giỏ hàng cho user: ${userId}.`
-              );
             }
           } catch (cartError) {
-            // Ghi lại lỗi nhưng không làm hỏng webhook
-            console.error(
-              "[WEBHOOK] Lỗi khi xóa giỏ hàng (nhưng thanh toán đã thành công):",
-              cartError
-            );
+            // Silent catch
           }
-          // 7. Gửi email thông báo ghi danh thành công cho từng khoá học
+
+          // 7. Gửi email thông báo
           try {
-            console.log(
-              "==================== [EMAIL DEBUG] ===================="
-            );
-            console.log("[WEBHOOK] Chuẩn bị gửi email...");
-
-            // Kiểm tra dữ liệu đầu vào
-            if (!transaction || !transaction.userId) {
-              console.error(
-                "[WEBHOOK] LỖI: Không tìm thấy 'transaction.userId' để gửi mail."
-              );
-              console.log(
-                "==================== [EMAIL DEBUG END] =================="
-              );
-              return; // Dừng lại nếu không có user
-            }
-
-            if (!enrollments || enrollments.length === 0) {
-              console.error(
-                "[WEBHOOK] LỖI: Không tìm thấy 'enrollments' để gửi mail."
-              );
-              console.log(
-                "==================== [EMAIL DEBUG END] =================="
-              );
-              return; // Dừng lại nếu không có enrollment
-            }
-
             const userId = transaction.userId;
-
-            // Lọc ra các courseId null để tránh lỗi TypeError
             const courseIds = enrollments
-              .map((e) => {
-                if (!e.courseId || !e.courseId._id) {
-                  console.warn(
-                    `[WEBHOOK] CẢNH BÁO: Enrollment ${e._id} có courseId bị null hoặc không hợp lệ.`
-                  );
-                  return null;
-                }
-                return e.courseId._id;
-              })
-              .filter((id) => id !== null); // Chỉ lấy các ID không bị null
-
-            console.log(
-              `[WEBHOOK] Đã lọc xong: Sẽ gửi email cho User: ${userId}`
-            );
-            console.log(
-              `[WEBHOOK] Với các Course IDs: ${JSON.stringify(courseIds)}`
-            );
+              .map((e) => e.courseId?._id)
+              .filter(Boolean);
 
             if (courseIds.length > 0) {
-              // Gọi hàm gửi mail
               sendIndividualEnrollmentEmails(userId, courseIds);
-
-              console.log(
-                "[WEBHOOK] ĐÃ GỌI HÀM sendIndividualEnrollmentEmails THÀNH CÔNG."
-              );
-            } else {
-              console.warn(
-                "[WEBHOOK] Không có courseId hợp lệ nào để gửi email."
-              );
             }
-
-            console.log(
-              "==================== [EMAIL DEBUG END] =================="
-            );
           } catch (emailError) {
-            // Bắt bất kỳ lỗi cú pháp nào khác
-            console.error(
-              "!!!!!!!!!!!! [WEBHOOK] LỖI NGHIÊM TRỌNG Ở BƯỚC 7 (GỬI EMAIL) !!!!!!!!!!!!"
+            // Silent catch
+          }
+          try {
+            const recipientId = transaction.userId;
+            // Tìm Admin để làm người gửi (hoặc fallback về chính user)
+            const systemSender = await User.findOne({ role: "admin" }).select(
+              "_id"
             );
-            console.error(emailError); // In TOÀN BỘ lỗi ra
+            const senderId = systemSender ? systemSender._id : recipientId;
+
+            const courseCount = enrollments.length;
+
+            // Format số tiền
+            const totalAmount = payment.amount;
+            const formattedAmount = new Intl.NumberFormat("vi-VN", {
+              style: "currency",
+              currency: "VND",
+            }).format(totalAmount);
+
+            // Gửi thông báo
+            await createAndSendNotification(io, {
+              recipient: recipientId,
+              sender: "68da40f4584deac572895b5f",
+              type: "payment",
+              content: `Thanh toán ${formattedAmount} cho ${courseCount} khóa học đã thành công.`,
+              link: "/profile/courses",
+            });
+          } catch (notiError) {
             console.error(
-              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+              "[WEBHOOK] Lỗi khi gửi thông báo socket (Bước 8):",
+              notiError
             );
           }
-        } else {
-          console.error(
-            `[WEBHOOK] LỖI: Không tìm thấy Payment tương ứng với Transaction ID: ${transaction._id}`
-          );
         }
-      } else if (transaction) {
-        console.warn(
-          `[WEBHOOK] CẢNH BÁO: Transaction với orderCode ${orderCode} đã được xử lý trước đó (status: ${transaction.status}). Bỏ qua.`
-        );
-      } else {
-        console.error(
-          `[WEBHOOK] LỖI: Không tìm thấy Transaction nào với orderCode: ${orderCode}`
-        );
       }
-    } else {
-      console.log(
-        `[WEBHOOK] Giao dịch không thành công hoặc không cần xử lý. Code: ${verifiedData.code}, Desc: ${verifiedData.desc}`
-      );
     }
 
     return res.status(200).json({ message: "Webhook processed successfully" });
   } catch (error) {
-    console.error(
-      "!!!!!!!!!!!! LỖI NGHIÊM TRỌNG TRONG WEBHOOK HANDLER !!!!!!!!!!!!"
-    );
-    console.error(error.message || error);
-    console.error(
-      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    );
+    // Log lỗi tổng chỉ để tránh server crash mà không biết lý do, nhưng giữ gọn
+    console.error("Webhook Error:", error.message);
     return res.status(400).json({ message: "Webhook verification failed" });
   }
 };
