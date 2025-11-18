@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node --env-file=.env server.js",
+    "dev": "nodemon --env-file=.env server.js",
     "test": "echo \"No test defined\"",
-    "test:socket": "node test-simple-socket.js"
+    "test:socket": "node --env-file=.env test-simple-socket.js"
   },
   "keywords": [],
   "author": "",
