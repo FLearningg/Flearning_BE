@@ -8,6 +8,9 @@ const {
   emitUnreadCount,
   emitMessageStatusUpdate,
 } = require("../socket/eventEmitters");
+const {
+  createAndSendNotification,
+} = require("../services/notificationService");
 
 /**
  * @desc    Send a message to another user
@@ -115,6 +118,16 @@ exports.sendMessage = async (req, res) => {
         status: { $ne: "read" },
       });
       emitUnreadCount(io, receiverId, unreadCount);
+
+      const senderName = req.user.firstName || "Một ai đó";
+
+      await createAndSendNotification(io, {
+        recipient: receiverId,
+        sender: senderId,
+        type: "chat_message", // Một type mới để phân biệt
+        content: `đã gửi cho bạn một tin nhắn.`,
+        link: `/profile/message`, // Link tới trang chat chung
+      });
     }
 
     res.status(201).json({

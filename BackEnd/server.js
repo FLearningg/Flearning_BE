@@ -110,6 +110,7 @@ console.log("✅ [SERVER] Socket.IO instance made available to routes");
 // Initialize socket handlers
 console.log("🔧 [SERVER] Loading Socket.IO chat handlers...");
 require("./socket/chatSocket")(io);
+require("./socket/notificationSocket")(io);
 
 app.use(
   cors({
@@ -227,10 +228,10 @@ mongoose
   })
   .then(() => {
     console.log("✅ [SERVER] Connected to MongoDB successfully");
-    
+
     // Khởi động auto AI review service
     startAutoReviewService(30); // Check mỗi 30 phút
-    
+
     const PORT = process.env.PORT || 5000;
     // Use server.listen instead of app.listen for Socket.IO
     server.listen(PORT, () => {
