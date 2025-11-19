@@ -36,6 +36,7 @@ const aiRoutes = require("./routes/aiRoutes");
 const recommendationRoutes = require("./routes/recommendationRoutes");
 const proctoringRoutes = require("./routes/proctoringRoutes");
 const surveyRoutes = require("./routes/surveyRoutes");
+const withdrawalRoutes = require("./routes/withdrawalRoutes");
 const { startAutoReviewService } = require("./services/autoAIReviewService");
 
 const app = express();
@@ -185,6 +186,8 @@ app.use("/api/cart", cartRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 // Profile routes
 app.use("/api/profile", profileRoutes);
+// Withdrawal routes
+app.use("/api/withdrawals", withdrawalRoutes);
 
 // Chat routes
 app.use("/api/chat", chatRoutes);
