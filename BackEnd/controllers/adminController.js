@@ -2321,36 +2321,46 @@ function extractSourceDestination(firebaseUrl) {
 
 /**
  * @desc    Get dashboard statistics (revenue, users, etc.)
- * @route   GET /api/admin/stats
+ * @route   GET /api/admin/stats?year=2025
  * @access  Private (Admin only)
  */
 exports.getDashboardStats = async (req, res) => {
   try {
+    const { year } = req.query;
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+    
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayOfYear = new Date(targetYear, 0, 1);
+    const lastDayOfYear = new Date(targetYear, 11, 31, 23, 59, 59, 999);
 
     const [
       totalUsers,
       totalCourses,
-      // THAY ĐỔI: Đổi tên biến để nhận kết quả từ aggregation
       totalEnrollmentsResult,
       totalRevenueResult,
       monthlySales,
       newUsersThisMonth,
       latestTransactions,
       courseRatingData,
+      // NEW: Additional statistics
+      categoryDistribution,
+      topInstructors,
+      userGrowth,
+      courseStatusStats,
+      revenueThisMonth,
+      enrollmentTrends,
+      topSellingCourses,
+      instructorStats,
     ] = await Promise.all([
       User.countDocuments(),
       Course.countDocuments(),
-      // THAY ĐỔI: Dùng aggregation trên User để tính tổng số lượt ghi danh
       User.aggregate([
-        // Giai đoạn 1: Tính số lượng khóa học mỗi người dùng đã đăng ký
         {
           $project: {
             enrollmentCount: { $size: { $ifNull: ["$enrolledCourses", []] } },
           },
         },
-        // Giai đoạn 2: Tính tổng số lượt đăng ký từ tất cả người dùng
         {
           $group: {
             _id: null,
@@ -2366,7 +2376,7 @@ exports.getDashboardStats = async (req, res) => {
         {
           $match: {
             status: "completed",
-            createdAt: { $gte: new Date(today.getFullYear(), 0, 1) },
+            createdAt: { $gte: firstDayOfYear, $lte: lastDayOfYear },
           },
         },
         {
@@ -2382,7 +2392,7 @@ exports.getDashboardStats = async (req, res) => {
         .sort({ createdAt: -1 })
         .limit(5),
       Course.aggregate([
-        { $match: { rating: { $exists: true, $ne: null } } },
+        { $match: { rating: { $exists: true, $ne: null, $gt: 0 }, status: "active" } },
         {
           $facet: {
             overallStats: [
@@ -2391,45 +2401,263 @@ exports.getDashboardStats = async (req, res) => {
                   _id: null,
                   averageRating: { $avg: "$rating" },
                   totalCoursesWithRating: { $sum: 1 },
+                  minRating: { $min: "$rating" },
+                  maxRating: { $max: "$rating" },
                 },
               },
             ],
-            ratingBreakdown: [
-              { $group: { _id: { $round: "$rating" }, count: { $sum: 1 } } },
-              { $sort: { _id: -1 } },
+            ratingDistribution: [
+              { 
+                $group: { 
+                  _id: "$rating",
+                  count: { $sum: 1 } 
+                } 
+              },
+              { $sort: { _id: 1 } },
+            ],
+          },
+        },
+      ]),
+      // NEW: Category distribution - same logic as category page
+      Category.aggregate([
+        {
+          $lookup: {
+            from: "courses",
+            let: { categoryId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $in: ["$$categoryId", "$categoryIds"] },
+                  status: "active",
+                },
+              },
+            ],
+            as: "courses",
+          },
+        },
+        {
+          $addFields: {
+            courseCount: { $size: "$courses" },
+          },
+        },
+        {
+          $match: {
+            courseCount: { $gt: 0 },
+          },
+        },
+        { $sort: { courseCount: -1 } },
+        { $limit: 10 },
+        {
+          $project: {
+            _id: 0,
+            name: 1,
+            count: "$courseCount",
+          },
+        },
+      ]),
+      // NEW: Top instructors by revenue
+      Transaction.aggregate([
+        { $match: { status: "completed" } },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "courseId",
+            foreignField: "_id",
+            as: "course",
+          },
+        },
+        { $unwind: { path: "$course", preserveNullAndEmptyArrays: false } },
+        {
+          $lookup: {
+            from: "users",
+            localField: "course.instructorId",
+            foreignField: "_id",
+            as: "instructor",
+          },
+        },
+        { $unwind: { path: "$instructor", preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: "$instructor._id",
+            name: {
+              $first: {
+                $concat: [
+                  "$instructor.firstName",
+                  " ",
+                  "$instructor.lastName",
+                ],
+              },
+            },
+            totalRevenue: { $sum: "$amount" },
+            coursesCount: { $addToSet: "$course._id" },
+          },
+        },
+        {
+          $project: {
+            name: 1,
+            totalRevenue: 1,
+            coursesCount: { $size: "$coursesCount" },
+          },
+        },
+        { $sort: { totalRevenue: -1 } },
+        { $limit: 5 },
+      ]),
+      // NEW: User growth (last 6 months of selected year)
+      User.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: new Date(targetYear, 0, 1),
+              $lte: lastDayOfYear,
+            },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+      // NEW: Course status statistics
+      Course.aggregate([
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      // NEW: Revenue this month
+      Transaction.aggregate([
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: firstDayOfMonth },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // NEW: Enrollment trends (last 7 days)
+      User.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+            },
+            enrollments: {
+              $sum: { $size: { $ifNull: ["$enrolledCourses", []] } },
+            },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      // NEW: Top selling courses
+      User.aggregate([
+        { $unwind: { path: "$enrolledCourses", preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: "$enrolledCourses",
+            enrollmentCount: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "courseInfo",
+          },
+        },
+        { $unwind: { path: "$courseInfo", preserveNullAndEmptyArrays: false } },
+        {
+          $project: {
+            title: "$courseInfo.title",
+            enrollmentCount: 1,
+            price: "$courseInfo.price",
+          },
+        },
+        { $sort: { enrollmentCount: -1 } },
+        { $limit: 5 },
+      ]),
+      // NEW: Instructor statistics
+      User.aggregate([
+        {
+          $facet: {
+            instructors: [
+              { $match: { role: "instructor" } },
+              { $count: "total" },
+            ],
+            activeInstructors: [
+              { $match: { role: "instructor", status: "verified" } },
+              { $count: "total" },
+            ],
+            onlineInstructors: [
+              { 
+                $match: { 
+                  role: "instructor",
+                  lastLogin: { $gte: new Date(Date.now() - 15 * 60 * 1000) }
+                } 
+              },
+              { $count: "total" },
+            ],
+            students: [
+              { $match: { role: "student" } }, 
+              { $count: "total" }
+            ],
+            activeStudents: [
+              { $match: { role: "student", status: "verified" } },
+              { $count: "total" },
+            ],
+            onlineStudents: [
+              { 
+                $match: { 
+                  role: "student",
+                  lastLogin: { $gte: new Date(Date.now() - 15 * 60 * 1000) }
+                } 
+              },
+              { $count: "total" },
             ],
           },
         },
       ]),
     ]);
 
-    // Xử lý dữ liệu rating (giữ nguyên)
-    let courseRating = { averageRating: 0, breakdown: [] };
+    // Xử lý dữ liệu rating - distribution cho line chart
+    let courseRating = { averageRating: 0, distribution: [], stats: {} };
     if (
       courseRatingData.length > 0 &&
       courseRatingData[0].overallStats.length > 0
     ) {
       const stats = courseRatingData[0].overallStats[0];
-      const breakdownData = courseRatingData[0].ratingBreakdown;
-      const totalRatedCourses = stats.totalCoursesWithRating;
+      const distributionData = courseRatingData[0].ratingDistribution;
+      
       courseRating.averageRating = stats.averageRating;
-      const breakdownMap = new Map(
-        breakdownData.map((item) => [item._id, item.count])
-      );
-      courseRating.breakdown = [5, 4, 3, 2, 1].map((star) => {
-        const count = breakdownMap.get(star) || 0;
-        return {
-          stars: star,
-          count: count,
-          percentage:
-            totalRatedCourses > 0
-              ? Math.round((count / totalRatedCourses) * 100)
-              : 0,
-        };
-      });
+      courseRating.stats = {
+        total: stats.totalCoursesWithRating,
+        min: stats.minRating,
+        max: stats.maxRating,
+      };
+      
+      // Format distribution data for line chart (rating value: count)
+      courseRating.distribution = distributionData.map(item => ({
+        rating: item._id,
+        count: item.count,
+      }));
     }
 
-    // Xử lý doanh thu theo tháng (giữ nguyên)
+    // Xử lý doanh thu theo tháng
     const formattedMonthlySales = Array.from({ length: 12 }, (_, i) => {
       const monthData = monthlySales.find((m) => m._id.month === i + 1);
       return {
@@ -2438,16 +2666,73 @@ exports.getDashboardStats = async (req, res) => {
       };
     });
 
+    // NEW: Format user growth data - lấy 12 tháng trong năm được chọn
+    const formattedUserGrowth = Array.from({ length: 12 }, (_, i) => {
+      const monthData = userGrowth.find(
+        (m) => m._id.year === targetYear && m._id.month === i + 1
+      );
+      return {
+        month: i + 1,
+        year: targetYear,
+        count: monthData?.count || 0,
+      };
+    });
+
+    // NEW: Format course status
+    const statusMap = courseStatusStats.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
     res.status(200).json({
       totalUsers,
       totalCourses,
-      // THAY ĐỔI: Lấy kết quả totalEnrollments từ aggregation
       totalEnrollments: totalEnrollmentsResult[0]?.total || 0,
       totalRevenue: parseFloat(totalRevenueResult[0]?.total.toString() || "0"),
       newUsersThisMonth,
       monthlySales: formattedMonthlySales,
       latestTransactions,
       courseRating,
+      // NEW: Additional statistics
+      categoryDistribution: categoryDistribution.map((cat) => ({
+        name: cat.name || cat._id || "Uncategorized",
+        count: cat.count || 0,
+      })),
+      topInstructors: topInstructors.map((inst) => ({
+        id: inst._id,
+        name: inst.name,
+        revenue: parseFloat(inst.totalRevenue.toString()),
+        coursesCount: inst.coursesCount,
+      })),
+      userGrowth: formattedUserGrowth,
+      courseStatus: {
+        active: statusMap.active || 0,
+        pending: statusMap.pending || 0,
+        rejected: statusMap.rejected || 0,
+        draft: statusMap.draft || 0,
+      },
+      revenueThisMonth: parseFloat(
+        revenueThisMonth[0]?.total.toString() || "0"
+      ),
+      enrollmentTrends: enrollmentTrends.map((trend) => ({
+        date: trend._id,
+        enrollments: trend.enrollments,
+      })),
+      topSellingCourses: topSellingCourses.map((course) => ({
+        id: course._id,
+        title: course.title,
+        enrollmentCount: course.enrollmentCount,
+        price: parseFloat(course.price?.toString() || "0"),
+      })),
+      instructorStats: {
+        total: instructorStats[0].instructors[0]?.total || 0,
+        active: instructorStats[0].activeInstructors[0]?.total || 0,
+        online: instructorStats[0].onlineInstructors[0]?.total || 0,
+        students: instructorStats[0].students[0]?.total || 0,
+        activeStudents: instructorStats[0].activeStudents[0]?.total || 0,
+        onlineStudents: instructorStats[0].onlineStudents[0]?.total || 0,
+      },
+      courseRating: courseRating,
     });
   } catch (error) {
     console.error("Lỗi khi lấy dữ liệu thống kê:", error);
@@ -3153,9 +3438,7 @@ exports.approveInstructorRequest = async (req, res) => {
 
     const profile = await InstructorProfile.findById(applicationId).populate(
       "userId"
-    );
-
-    if (!profile) {
+    );    if (!profile) {
       return res
         .status(404)
         .json({ success: false, message: "Instructor profile not found." });
@@ -3260,7 +3543,7 @@ exports.triggerAIReview = async (req, res) => {
 
     if (applicationId) {
       // Review một application cụ thể
-      console.log(`🤖 Admin triggering AI review for application: ${applicationId}`);
+      console.log(`Admin triggering AI review for application: ${applicationId}`);
       
       const profile = await InstructorProfile.findById(applicationId);
       if (!profile) {
@@ -3286,7 +3569,7 @@ exports.triggerAIReview = async (req, res) => {
       });
     } else {
       // Review tất cả pending applications
-      console.log(`🤖 Admin triggering AI review for ALL pending applications`);
+      console.log(`Admin triggering AI review for ALL pending applications`);
       
       const pendingProfiles = await InstructorProfile.find({ 
         applicationStatus: 'pending' 
