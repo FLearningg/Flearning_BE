@@ -3,6 +3,7 @@ const Course = require("../models/courseModel");
 const Section = require("../models/sectionModel");
 const Lesson = require("../models/lessonModel");
 const Enrollment = require("../models/enrollmentModel");
+const Certificate = require("../models/CertificateModel");
 
 /**
  * @desc    Get course progress for a user
@@ -533,6 +534,210 @@ const getCompletedLessonsDetails = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get student learning analytics (time, streak, achievements)
+ * @route   GET /api/progress/analytics
+ * @access  Private (Student)
+ */
+const getStudentAnalytics = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const year = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
+    const month = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
+    
+    console.log('getStudentAnalytics called with:', { userId, year, month });
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get all progress records for this student
+    const allProgress = await Progress.find({ studentId: userId });
+    
+    console.log('Found progress records:', allProgress.length);
+    
+    // Log all completed lessons with dates
+    let totalLessonsWithDates = 0;
+    allProgress.forEach(progress => {
+      if (progress.completedLessons && Array.isArray(progress.completedLessons)) {
+        progress.completedLessons.forEach(lesson => {
+          if (lesson.completedAt) {
+            totalLessonsWithDates++;
+            const dateStr = new Date(lesson.completedAt).toISOString().split('T')[0];
+            console.log(`Lesson completed on: ${dateStr}`);
+          }
+        });
+      }
+    });
+    console.log('Total lessons with completedAt:', totalLessonsWithDates);
+    
+    // Initialize counters
+    let totalLearningMinutes = 0;
+    let lessonsCompletedToday = 0;
+    let lessonsCompletedThisWeek = 0;
+    let lessonsCompletedThisMonth = 0;
+    let totalCompletedLessons = 0;
+    
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
+    
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    
+    // Process each progress record
+    allProgress.forEach(progress => {
+      if (!progress.completedLessons || !Array.isArray(progress.completedLessons)) {
+        return;
+      }
+      
+      totalCompletedLessons += progress.completedLessons.length;
+      
+      progress.completedLessons.forEach(lesson => {
+        // Estimate 30 minutes per lesson
+        totalLearningMinutes += 30;
+        
+        if (!lesson.completedAt) return;
+        
+        const completedDate = new Date(lesson.completedAt);
+        completedDate.setHours(0, 0, 0, 0);
+        
+        if (completedDate.getTime() === today.getTime()) {
+          lessonsCompletedToday++;
+        }
+        if (completedDate >= sevenDaysAgo) {
+          lessonsCompletedThisWeek++;
+        }
+        if (completedDate >= thirtyDaysAgo) {
+          lessonsCompletedThisMonth++;
+        }
+      });
+    });
+    
+    // Calculate learning streak (consecutive days with completed lessons)
+    const uniqueDates = new Set();
+    allProgress.forEach(progress => {
+      if (!progress.completedLessons || !Array.isArray(progress.completedLessons)) {
+        return;
+      }
+      progress.completedLessons.forEach(lesson => {
+        if (!lesson.completedAt) return;
+        const dateStr = new Date(lesson.completedAt).toISOString().split('T')[0];
+        uniqueDates.add(dateStr);
+      });
+    });
+    
+    const sortedDates = Array.from(uniqueDates).sort().reverse();
+    let currentStreak = 0;
+    let expectedDate = new Date(today);
+    
+    for (const dateStr of sortedDates) {
+      const lessonDate = new Date(dateStr);
+      lessonDate.setHours(0, 0, 0, 0);
+      expectedDate.setHours(0, 0, 0, 0);
+      
+      if (lessonDate.getTime() === expectedDate.getTime()) {
+        currentStreak++;
+        expectedDate.setDate(expectedDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+    
+    // Get enrollment stats
+    const enrollments = await Enrollment.find({ 
+      userId: userId,
+      status: "enrolled"
+    });
+    
+    const completedCourses = await Enrollment.countDocuments({
+      userId: userId,
+      status: "completed"
+    });
+    
+    // Activity chart data for selected year (12 months)
+    const weeklyActivity = [];
+    
+    console.log(`Generating monthly activity for year ${year}`);
+    
+    // Get all certificates for this user (certificate = course completed)
+    const certificates = await Certificate.find({ 
+      userId: userId
+    }).select('courseId createdAt');
+    
+    console.log('Found certificates:', certificates.length);
+    if (certificates.length > 0) {
+      console.log('Sample certificate:', {
+        courseId: certificates[0].courseId,
+        createdAt: certificates[0].createdAt,
+        month: new Date(certificates[0].createdAt).getMonth() + 1,
+        year: new Date(certificates[0].createdAt).getFullYear()
+      });
+    }
+    
+    // Generate data for 12 months
+    for (let month = 1; month <= 12; month++) {
+      const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0);
+      const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+      
+      console.log(`\nChecking month ${month}/${year}`);
+      
+      let coursesCount = 0;
+      certificates.forEach(cert => {
+        if (!cert.createdAt) return;
+        const certDate = new Date(cert.createdAt);
+        
+        if (certDate >= startOfMonth && certDate <= endOfMonth) {
+          coursesCount++;
+          console.log(`  ✓ Certificate issued: ${certDate.toISOString()} for course ${cert.courseId}`);
+        }
+      });
+      
+      console.log(`Month ${month} total: ${coursesCount} courses`);
+      
+      weeklyActivity.push({
+        month: month,
+        courses: coursesCount
+      });
+    }
+    
+    console.log('Monthly activity generated:', weeklyActivity.length, 'months');
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        learningTime: {
+          total: Math.floor(totalLearningMinutes / 60), // hours
+          totalMinutes: totalLearningMinutes,
+          today: lessonsCompletedToday * 30,
+          thisWeek: lessonsCompletedThisWeek * 30,
+          thisMonth: lessonsCompletedThisMonth * 30,
+        },
+        streak: {
+          current: currentStreak,
+          longest: currentStreak, // You can track this separately in the future
+        },
+        lessons: {
+          total: totalCompletedLessons,
+          today: lessonsCompletedToday,
+          thisWeek: lessonsCompletedThisWeek,
+          thisMonth: lessonsCompletedThisMonth,
+        },
+        courses: {
+          enrolled: enrollments.length,
+          completed: completedCourses,
+          inProgress: enrollments.length - completedCourses,
+        },
+        weeklyActivity: weeklyActivity,
+      }
+    });
+  } catch (error) {
+    console.error("Error getting student analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while getting student analytics",
+    });
+  }
+};
+
 module.exports = {
   getCourseProgress,
   markLessonCompleted,
@@ -541,4 +746,5 @@ module.exports = {
   getCompletedCourses,
   getIncompleteCourses,
   getCompletedLessonsDetails,
+  getStudentAnalytics,
 };

@@ -8,8 +8,16 @@ const {
   getCompletedCourses,
   getIncompleteCourses,
   getCompletedLessonsDetails,
+  getStudentAnalytics,
 } = require("../controllers/progressController");
 const authorize = require("../middlewares/authMiddleware");
+
+/**
+ * @route   GET /api/progress/analytics?year=2025
+ * @desc    Get student learning analytics (time, streak, achievements) with optional year filter
+ * @access  Private
+ */
+router.get("/analytics", authorize(), getStudentAnalytics);
 
 /**
  * @route   GET /api/progress

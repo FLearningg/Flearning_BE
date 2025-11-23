@@ -37,6 +37,9 @@ const UserSchema = new Schema(
       type: Number,
       default: 0,
     },
+    lastLogin: {
+      type: Date,
+    },
     payoutDetails: {
       bankName: String,
       accountNumber: String,

@@ -1,0 +1,67 @@
+{
+  "profile": {
+    "aiReviewDetails": {
+      "decision": {
+        "status": "rejected",
+        "reason": "Thiếu thông tin cá nhân quan trọng; Không có kinh nghiệm làm việc liên quan; Kỹ năng chuyên môn không đáp ứng yêu cầu; Thiếu thông tin học vấn; Tài liệu không đủ chất lượng hoặc không thể đọc được"
+      }
+    },
+    "_id": "691d4dacee365f5af6e485a7",
+    "userId": {
+      "learningPreferences": {
+        "surveyCompleted": false,
+        "learningObjectives": [],
+        "interestedSkills": []
+      },
+      "learningPath": {
+        "pathSummary": {
+          "skillsCovered": []
+        },
+        "regenerationCount": 0,
+        "phases": [],
+        "recommendedCourses": []
+      },
+      "_id": "690b7e227deb60689f663a4c",
+      "firstName": "Nguyễn",
+      "lastName": "Lam Giang",
+      "userName": "giangnlde180815_15108191",
+      "email": "giangnlde180815@fpt.edu.vn",
+      "password": null,
+      "role": "student",
+      "status": "verified",
+      "enrolledCourses": [],
+      "userImage": "https://lh3.googleusercontent.com/a/ACg8ocJ-wanYmAyOlkwsyut5OMgjCie_dKYq0sEDMYeeWZzG8x7CiGFM=s96-c",
+      "moneyLeft": {
+        "$numberDecimal": "0"
+      },
+      "createdAt": "2025-11-05T16:41:06.399Z",
+      "updatedAt": "2025-11-05T16:41:06.399Z",
+      "__v": 0
+    },
+    "phone": "0912345678",
+    "expertise": [
+      "Web Development",
+      "Data Science",
+      "Business & Management"
+    ],
+    "experience": "Tôi có 5 năm kinh nghiệm giảng dạy Web Development tại các trung tâm đào tạo và trực tuyến. Đã training cho hơn 500 học viên về JavaScript, React, Node.js. Hiện đang làm Senior Developer và part-time instructor tại FPT Software. Có kinh nghiệm mentoring sinh viên và fresh graduates.",
+    "documents": [
+      "https://firebasestorage.googleapis.com/v0/b/flearning-7f88f.firebasestorage.app/o/temporary%2Finstructor-documents%2Fcv_1763528098592.docx?alt=media"
+    ],
+    "applicationStatus": "rejected",
+    "totalStudents": 0,
+    "totalCourses": 0,
+    "totalReviews": 0,
+    "averageRating": 0,
+    "appliedAt": "2025-11-19T04:55:08.596Z",
+    "createdAt": "2025-11-19T04:55:08.597Z",
+    "updatedAt": "2025-11-19T04:55:22.248Z",
+    "__v": 0,
+    "aiReviewScore": 17,
+    "aiReviewStatus": "rejected",
+    "rejectedAt": "2025-11-19T04:55:24.662Z",
+    "rejectionReason": "Thiếu thông tin cá nhân quan trọng; Không có kinh nghiệm làm việc liên quan; Kỹ năng chuyên môn không đáp ứng yêu cầu; Thiếu thông tin học vấn; Tài liệu không đủ chất lượng hoặc không thể đọc được"
+  },
+  "timestamp": "2025-11-19T04:55:24.663Z",
+  "reason": "AI rejection backup"
+}

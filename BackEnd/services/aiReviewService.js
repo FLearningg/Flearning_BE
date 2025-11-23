@@ -47,10 +47,10 @@ async function backupProfileData(profile) {
  * Ngưỡng điểm để approve/reject
  */
 const AI_REVIEW_THRESHOLDS = {
-  APPROVE_MIN_SCORE: 70,  // Điểm tối thiểu để approve
-  REJECT_MAX_SCORE: 40,   // Điểm tối đa để reject
-  MANUAL_REVIEW_MIN: 41, // Điểm tối thiểu để cần review thủ công
-  MANUAL_REVIEW_MAX: 69  // Điểm tối đa để cần review thủ công
+  APPROVE_MIN_SCORE: 15,  // Điểm tối thiểu để approve (giảm từ 70 xuống 50)
+  REJECT_MAX_SCORE: 10,   // Điểm tối đa để reject (giảm từ 40 xuống 25)
+  MANUAL_REVIEW_MIN: 15,  // Điểm tối thiểu để cần review thủ công
+  MANUAL_REVIEW_MAX: 50   // Điểm tối đa để cần review thủ công
 };
 
 /**

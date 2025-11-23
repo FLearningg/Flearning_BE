@@ -10,4 +10,4 @@ const CertificateSchema = new Schema(
   { timestamps: true, collection: "certificates" }
 );
 
-module.exports = mongoose.model("Certificate", CertificateSchema);
+module.exports = mongoose.models.Certificate || mongoose.model("Certificate", CertificateSchema);

@@ -390,6 +390,10 @@ exports.login = async (req, res) => {
     }
 
     const { accessToken, refreshToken } = generateTokens(user);
+    
+    // Update lastLogin timestamp for online status tracking
+    await User.findByIdAndUpdate(user._id, { lastLogin: new Date() });
+    
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
